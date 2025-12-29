@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Add the project root to sys.path to resolve imports correctly
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import click
 import torch
 import numpy as np
@@ -38,7 +44,7 @@ class CognitiveSimulation:
         # In a real scenario, we'd query relevant memories based on input features
         
         # 2. Network Forward Pass
-        output = self.network(input_data, context)
+        output, meta_state = self.network(input_data, context)
         
         # 3. Calculate System State
         layer_weights = self.network.get_layer_weights()

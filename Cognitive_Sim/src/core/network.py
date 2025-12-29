@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from src.config import NetworkConfig
+from src.core.entropy_calculator import EntropyCalculator
 
 class CognitiveNetwork(nn.Module):
     """
@@ -14,6 +15,7 @@ class CognitiveNetwork(nn.Module):
         self.input_size = config.input_size
         self.hidden_size = config.hidden_size
         self.output_size = config.output_size
+        self.entropy_threshold = config.entropy_threshold
         
         # Core processing layers
         self.layer1 = nn.Linear(self.input_size, self.hidden_size)
@@ -25,10 +27,33 @@ class CognitiveNetwork(nn.Module):
         
         self.dropout = nn.Dropout(0.2)
         
-    def forward(self, x: torch.Tensor, memory_context: torch.Tensor = None) -> torch.Tensor:
+    def calculate_uncertainty(self) -> float:
+        """
+        Calculate current network uncertainty based on weight entropy.
+        
+        Returns:
+            float: Uncertainty score (higher means more uncertain)
+        """
+        weights = self.get_layer_weights()
+        # Flatten and concatenate weights for a holistic view
+        flat_weights = []
+        for w in weights:
+            flat_weights.extend(w.flatten())
+            
+        return EntropyCalculator.calculate_weight_entropy(flat_weights)
+
+    def forward(self, x: torch.Tensor, memory_context: torch.Tensor = None) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
         Forward pass with optional memory context injection.
+        Returns output and meta-cognitive state.
         """
+        # Meta-cognitive check
+        uncertainty = self.calculate_uncertainty()
+        meta_state = {
+            "uncertainty": uncertainty,
+            "high_uncertainty": uncertainty > self.entropy_threshold
+        }
+
         # Initial processing
         x = F.relu(self.layer1(x))
         x = self.dropout(x)
@@ -48,7 +73,12 @@ class CognitiveNetwork(nn.Module):
         
         # Output generation
         output = self.output_layer(x)
-        return output
+        
+        # If highly uncertain, dampen output confidence (simulating hesitation)
+        if meta_state["high_uncertainty"]:
+            output = output * 0.8
+            
+        return output, meta_state
 
     def get_layer_weights(self) -> List[Any]:
         """Extract weights for entropy calculation."""

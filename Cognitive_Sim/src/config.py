@@ -13,6 +13,7 @@ class NetworkConfig(BaseModel):
     hidden_size: int = Field(default=20, gt=0)
     output_size: int = Field(default=5, gt=0)
     learning_rate: float = Field(default=0.01, gt=0.0)
+    entropy_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 class SimulationConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
