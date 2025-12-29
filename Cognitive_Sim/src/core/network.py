@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from src.config import NetworkConfig
 from src.core.entropy_calculator import EntropyCalculator
@@ -98,3 +99,16 @@ class CognitiveNetwork(nn.Module):
             self.plasticity.add_(adjustment)
             # Clip to reasonable range
             self.plasticity.clamp_(0.5, 2.0)
+
+    def save_weights(self, path: str):
+        """Save network weights to disk."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.state_dict(), path)
+
+    def load_weights(self, path: str):
+        """Load network weights from disk."""
+        path = Path(path)
+        if path.exists():
+            self.load_state_dict(torch.load(path))
+
