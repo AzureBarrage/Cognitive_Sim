@@ -17,6 +17,10 @@ from src.core.optimizer import CognitiveOptimizer
 from src.core.entropy_calculator import EntropyCalculator
 from src.environment.scheduler import CognitiveScheduler
 from src.environment.stability_tracker import StabilityTracker
+from src.environment.dataset_manager import DatasetManager
+from src.environment.simulation_env import SimulationEnvironment
+from src.core.agent import CognitiveAgent
+from src.utils.logger import logger
 
 class CognitiveSimulation:
     def __init__(self, config_env: str = "development"):
@@ -28,73 +32,62 @@ class CognitiveSimulation:
         self.optimizer = CognitiveOptimizer(self.network.parameters(), 
                                           base_lr=self.config.network.learning_rate)
         
-        # Initialize Environment/Monitoring
-        self.scheduler = CognitiveScheduler()
+        # Initialize Agent
+        self.agent = CognitiveAgent(self.memory, self.network, self.optimizer)
+        
+        # Initialize Environment
+        self.data_manager = DatasetManager(self.config.dict())
+        self.data_manager.load_data()
+        self.env = SimulationEnvironment(self.data_manager.get_train_loader(batch_size=1))
+        
+        # Initialize Monitoring
         self.tracker = StabilityTracker(self.config.entropy_threshold)
         self.entropy_calc = EntropyCalculator()
         
         self.is_running = False
 
-    def step(self, input_data: torch.Tensor) -> torch.Tensor:
+    def run_training_loop(self, steps: int = 100):
         """
-        Execute one simulation step.
+        Run the Agentic Simulation Loop.
         """
-        # 1. Retrieve Context from Memory (simplified random access for demo)
-        context = None
-        # In a real scenario, we'd query relevant memories based on input features
-        
-        # 2. Network Forward Pass
-        output, meta_state = self.network(input_data, context)
-        
-        # 3. Calculate System State
-        layer_weights = self.network.get_layer_weights()
-        system_entropy = self.entropy_calc.calculate_system_entropy(layer_weights)
-        
-        # 4. Update Stability Tracker
-        # Simplified: using entropy as inverse proxy for stability
-        current_stability = 1.0 - system_entropy
-        self.tracker.log_state(current_stability, system_entropy)
-        
-        # 5. Optimize Network
-        # Adapts learning rate based on stability
-        self.optimizer.step(system_entropy, current_stability)
-        
-        # 6. Schedule Maintenance Tasks
-        if self.tracker.is_unstable():
-            self.scheduler.add_task(
-                f"stabilize_{time.time()}", 
-                "stabilize_network", 
-                None, 
-                priority=0.5
-            )
-            
-        return output
-
-    def run_training_loop(self, epochs: int = 10):
-        """
-        Run a basic training loop simulation.
-        """
-        print(f"Starting simulation with {epochs} epochs...")
+        print(f"Starting Agentic Simulation with {steps} steps...")
         self.is_running = True
         
-        for epoch in range(epochs):
-            # Generate dummy data
-            input_data = torch.randn(1, self.config.network.input_size)
+        for step in range(steps):
+            print(f"\n--- Step {step+1}/{steps} ---")
+            print(f"Energy: {self.agent.energy:.2f} | Rewards: {self.agent.total_rewards:.2f} | Cycles Spent: {self.agent.compute_cycles_spent:.2f}")
             
-            # Execute Step
-            output = self.step(input_data)
+            # 1. Agent Decides Strategy
+            strategy = self.agent.decide_strategy()
             
-            # Process Scheduled Tasks
-            while self.scheduler.queue_size() > 0:
-                task = self.scheduler.get_next_task()
-                print(f"Executing task: {task.task_id} ({task.action_type})")
-                # Handle task logic here...
+            if strategy == "learn_new":
+                # Get input from Environment
+                input_data, target = self.env.get_next_flashcard()
+                result = self.agent.learn_new(input_data, target)
+                print(f"Action: Learned New | Loss: {result.get('loss', 0):.4f} | Status: {result['status']}")
             
-            # Log progress
-            health = self.tracker.get_system_health()
-            print(f"Epoch {epoch+1}/{epochs} - Stability: {health['avg_stability']:.4f}, Entropy: {health['avg_entropy']:.4f}")
+            elif strategy == "review":
+                result = self.agent.review()
+                print(f"Action: Review | Status: {result['status']}")
+                if 'energy_gained' in result:
+                    print(f"  -> Energy Gained: +{result['energy_gained']}")
+                if 'penalty' in result:
+                    print(f"  -> Penalty: {result['penalty']}")
             
-            time.sleep(0.1)  # Simulate processing time
+            time.sleep(0.05)  # Simulate processing time
+
+    def verify(self):
+        """Verify system components."""
+        try:
+            print("[OK] Configuration loaded")
+            print("[OK] Memory Layer initialized")
+            print("[OK] Neural Network initialized")
+            print("[OK] Optimizer initialized")
+            print("[OK] Agent initialized")
+            print("[OK] Environment initialized")
+            print("System verification successful!")
+        except Exception as e:
+            print(f"[FAIL] System verification failed: {str(e)}")
 
 @click.group()
 def cli():
@@ -102,23 +95,18 @@ def cli():
 
 @cli.command()
 @click.option('--env', default='development', help='Environment configuration to use')
-@click.option('--epochs', default=5, help='Number of simulation epochs')
-def run(env, epochs):
+@click.option('--steps', default=20, help='Number of simulation steps')
+def run(env, steps):
     """Run the cognitive simulation."""
     sim = CognitiveSimulation(env)
-    sim.run_training_loop(epochs)
+    sim.run_training_loop(steps)
 
 @cli.command()
 def verify():
     """Verify system components."""
     try:
         sim = CognitiveSimulation()
-        print("[OK] Configuration loaded")
-        print("[OK] Memory Layer initialized")
-        print("[OK] Neural Network initialized")
-        print("[OK] Optimizer initialized")
-        print("[OK] Scheduler initialized")
-        print("System verification successful!")
+        sim.verify()
     except Exception as e:
         print(f"[FAIL] System verification failed: {str(e)}")
 

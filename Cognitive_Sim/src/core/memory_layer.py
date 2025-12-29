@@ -72,6 +72,16 @@ class MemoryLayer:
         memory['last_access'] = current_time
         memory['access_count'] += 1
 
+    def get_at_risk_memories(self, threshold: float = 0.3) -> list[str]:
+        """
+        Identify memories that are below the stability threshold.
+        """
+        at_risk = []
+        for mem_id, memory in self.memories.items():
+            if self._calculate_retention(memory) < threshold:
+                at_risk.append(mem_id)
+        return at_risk
+
     def get_memory_health(self, memory_id: str) -> Dict[str, float]:
         """Get diagnostics for a specific memory."""
         if memory_id not in self.memories:

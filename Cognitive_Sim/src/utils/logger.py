@@ -39,3 +39,6 @@ def setup_logger(name: str = "cognitive_sim", log_level: str = "INFO", log_file:
         logger.addHandler(file_handler)
 
     return logger
+
+# Create a default logger instance
+logger = setup_logger()
