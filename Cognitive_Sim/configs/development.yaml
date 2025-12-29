@@ -1,0 +1,13 @@
+memory:
+  initial_retention: 1.0
+  decay_rate: 0.1
+  stability_threshold: 0.3
+
+network:
+  input_size: 10
+  hidden_size: 20
+  output_size: 5
+  learning_rate: 0.01
+
+entropy_threshold: 0.7
+log_level: "INFO"
