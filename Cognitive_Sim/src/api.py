@@ -29,6 +29,9 @@ class AgentStatus(BaseModel):
     total_rewards: float
     memory_count: int
     at_risk_memories: int
+    review_success_rate: float
+    learn_success_rate: float
+    current_lr: float
     uptime_seconds: float
 
 # --- Global State ---
@@ -48,7 +51,7 @@ async def lifespan(app: FastAPI):
     network.load_weights("data/network_weights.pth") # Load persisted brain
     
     optimizer = CognitiveOptimizer(network.parameters(), base_lr=config.network.learning_rate)
-    agent = CognitiveAgent(memory, network, optimizer)
+    agent = CognitiveAgent(memory, network, optimizer, config=config.agent)
     
     sim_state['agent'] = agent
     sim_state['start_time'] = time.time()
@@ -70,11 +73,16 @@ def root():
 @app.get("/status", response_model=AgentStatus)
 def get_status():
     agent = sim_state['agent']
+    total_reviews = agent.review_successes + agent.review_failures
+    total_learns = agent.learn_successes + agent.learn_failures
     return AgentStatus(
         energy=agent.energy,
         total_rewards=agent.total_rewards,
         memory_count=len(agent.memory.memories),
-        at_risk_memories=len(agent.memory.get_at_risk_memories()),
+        at_risk_memories=agent.memory.get_due_review_count(),
+        review_success_rate=(agent.review_successes / total_reviews) if total_reviews else 0.0,
+        learn_success_rate=(agent.learn_successes / total_learns) if total_learns else 0.0,
+        current_lr=agent.optimizer.get_current_lr(),
         uptime_seconds=time.time() - sim_state['start_time']
     )
 
@@ -118,9 +126,9 @@ def ask_agent(request: PredictionRequest):
         memory_data = agent.memory.retrieve_memory(request.memory_key)
         if memory_data:
             recall_status = "success"
-            # Assuming stored data has 'input' tensor we can use as context
-            # simplified for this template:
-            memory_context = torch.tensor(memory_data['input'], dtype=torch.float32) if isinstance(memory_data, dict) else None
+            # Standardized contract: stored payload includes 'input' tensor
+            if isinstance(memory_data, dict) and 'input' in memory_data:
+                memory_context = memory_data['input']
         else:
             recall_status = "forgotten"
     
@@ -144,5 +152,21 @@ def trigger_sleep():
     sim_state['agent'].network.save_weights("data/network_weights.pth")
     return {"status": "slept", "message": "Memories consolidated."}
 
-if __name__ == "__main__":
+
+@app.post("/act")
+def act(action: str):
+    """Explicitly force an agent action (useful for demos/testing)."""
+    agent = sim_state['agent']
+    if action == "sleep":
+        return agent.sleep()
+    if action == "review":
+        return agent.review()
+    raise HTTPException(status_code=400, detail="Unsupported action")
+
+
+def main():
+    """Console entrypoint for running the API via uvicorn."""
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+if __name__ == "__main__":
+    main()

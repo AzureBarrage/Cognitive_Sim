@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cognitive-sim"
+version = "0.1.0"
+description = "Biologically-inspired cognitive architecture simulation"
+requires-python = ">=3.8"
+
+# Note: runtime dependencies remain in requirements/*.txt for now.
+
+[project.scripts]
+cognitive-sim = "src.main:cli"
+cognitive-sim-api = "src.api:main"
+
+[tool.setuptools]
+package-dir = {"" = "Cognitive_Sim"}
+
+[tool.setuptools.packages.find]
+where = ["Cognitive_Sim"]

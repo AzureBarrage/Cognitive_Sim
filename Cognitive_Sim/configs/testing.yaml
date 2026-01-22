@@ -1,0 +1,31 @@
+memory:
+  initial_retention: 1.0
+  decay_rate: 0.2
+  stability_threshold: 0.3
+  review_threshold: 0.4
+  recall_failure_retention: 0.15
+  store_dir: "data/memory_store"
+  index_path: "data/memory_index.json"
+  eager_load: false
+
+network:
+  input_size: 10
+  hidden_size: 20
+  output_size: 5
+  learning_rate: 0.01
+  entropy_threshold: 0.6
+  uncertainty_update_interval: 1
+
+agent:
+  initial_energy: 50.0
+  energy_cost_learn: 5.0
+  energy_cost_review: 2.0
+  energy_reward_correct: 10.0
+  energy_cost_sleep: 1.0
+  energy_gain_sleep: 25.0
+  sleep_when_energy_below: 10.0
+  consolidation_boost: 0.25
+  compute_cost_relearn: 15.0
+
+entropy_threshold: 0.7
+log_level: "INFO"

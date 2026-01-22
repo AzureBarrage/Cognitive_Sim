@@ -17,6 +17,11 @@ class CognitiveNetwork(nn.Module):
         self.hidden_size = config.hidden_size
         self.output_size = config.output_size
         self.entropy_threshold = config.entropy_threshold
+        self.uncertainty_update_interval = getattr(config, "uncertainty_update_interval", 10)
+
+        # Cached uncertainty (avoid expensive recompute every forward)
+        self._uncertainty_cache: float = 0.0
+        self._uncertainty_step: int = 0
         
         # Core processing layers
         self.layer1 = nn.Linear(self.input_size, self.hidden_size)
@@ -37,10 +42,7 @@ class CognitiveNetwork(nn.Module):
         """
         weights = self.get_layer_weights()
         # Flatten and concatenate weights for a holistic view
-        flat_weights = []
-        for w in weights:
-            flat_weights.extend(w.flatten())
-            
+        flat_weights = np.concatenate([w.reshape(-1) for w in weights], axis=0)
         return EntropyCalculator.calculate_weight_entropy(flat_weights)
 
     def forward(self, x: torch.Tensor, memory_context: torch.Tensor = None) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -48,8 +50,12 @@ class CognitiveNetwork(nn.Module):
         Forward pass with optional memory context injection.
         Returns output and meta-cognitive state.
         """
-        # Meta-cognitive check
-        uncertainty = self.calculate_uncertainty()
+        # Meta-cognitive check (scheduled)
+        self._uncertainty_step += 1
+        if self._uncertainty_step % int(self.uncertainty_update_interval) == 0:
+            self._uncertainty_cache = self.calculate_uncertainty()
+
+        uncertainty = float(self._uncertainty_cache)
         meta_state = {
             "uncertainty": uncertainty,
             "high_uncertainty": uncertainty > self.entropy_threshold
@@ -84,9 +90,9 @@ class CognitiveNetwork(nn.Module):
     def get_layer_weights(self) -> List[Any]:
         """Extract weights for entropy calculation."""
         return [
-            self.layer1.weight.detach().numpy(),
-            self.layer2.weight.detach().numpy(),
-            self.output_layer.weight.detach().numpy()
+            self.layer1.weight.detach().cpu().numpy(),
+            self.layer2.weight.detach().cpu().numpy(),
+            self.output_layer.weight.detach().cpu().numpy()
         ]
     
     def update_plasticity(self, error_signal: float):

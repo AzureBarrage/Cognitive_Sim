@@ -1,9 +1,3 @@
-import sys
-from pathlib import Path
-
-# Add the project root to sys.path to resolve imports correctly
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 import click
 import torch
 import numpy as np
@@ -21,9 +15,12 @@ from src.environment.dataset_manager import DatasetManager
 from src.environment.simulation_env import SimulationEnvironment
 from src.core.agent import CognitiveAgent
 from src.utils.logger import logger
+from src.utils.metrics import MetricsTracker
+from src.system_health import SystemHealth
+from src.utils.visualizer import Visualizer
 
 class CognitiveSimulation:
-    def __init__(self, config_env: str = "development"):
+    def __init__(self, config_env: str = "development", fresh: bool = False):
         self.config = load_config(config_env)
         
         # Initialize Core Components
@@ -32,8 +29,13 @@ class CognitiveSimulation:
         self.optimizer = CognitiveOptimizer(self.network.parameters(), 
                                           base_lr=self.config.network.learning_rate)
         
+        # Load persisted state unless starting fresh
+        if not fresh:
+            self.memory.load_state()
+            self.network.load_weights("data/network_weights.pth")
+
         # Initialize Agent
-        self.agent = CognitiveAgent(self.memory, self.network, self.optimizer)
+        self.agent = CognitiveAgent(self.memory, self.network, self.optimizer, config=self.config.agent)
         
         # Initialize Environment
         self.data_manager = DatasetManager(self.config.dict())
@@ -43,6 +45,10 @@ class CognitiveSimulation:
         # Initialize Monitoring
         self.tracker = StabilityTracker(self.config.entropy_threshold)
         self.entropy_calc = EntropyCalculator()
+
+        self.metrics = MetricsTracker()
+        self.health = SystemHealth()
+        self.visualizer = Visualizer()
         
         self.is_running = False
 
@@ -65,6 +71,14 @@ class CognitiveSimulation:
                 input_data, target = self.env.get_next_flashcard()
                 result = self.agent.learn_new(input_data, target)
                 print(f"Action: Learned New | Loss: {result.get('loss', 0):.4f} | Status: {result['status']}")
+
+                entropy = float(self.network.calculate_uncertainty())
+                self.metrics.log_training_step(
+                    step=step,
+                    loss=float(result.get('loss', 0.0) or 0.0),
+                    entropy=entropy,
+                    plasticity=float(self.network.plasticity.mean().item())
+                )
             
             elif strategy == "review":
                 result = self.agent.review()
@@ -73,8 +87,21 @@ class CognitiveSimulation:
                     print(f"  -> Energy Gained: +{result['energy_gained']}")
                 if 'penalty' in result:
                     print(f"  -> Penalty: {result['penalty']}")
+
+            elif strategy == "sleep":
+                result = self.agent.sleep()
+                print(f"Action: Sleep | Status: {result['status']} | Boosted: {result.get('boosted_memories', 0)}")
+
+            # System health
+            usage = self.health.monitor.get_resource_usage()
+            self.metrics.log_system_health(step=step, memory_usage=float(usage.get('memory_rss_mb', 0.0)), cpu_usage=float(usage.get('cpu_percent', 0.0)))
             
             time.sleep(0.05)  # Simulate processing time
+
+        # Persist + plot at end of run
+        self.memory.save_state()
+        self.network.save_weights("data/network_weights.pth")
+        self.visualizer.plot_training_history(self.metrics.get_history("training"))
 
     def verify(self):
         """Verify system components."""
@@ -96,9 +123,10 @@ def cli():
 @cli.command()
 @click.option('--env', default='development', help='Environment configuration to use')
 @click.option('--steps', default=20, help='Number of simulation steps')
-def run(env, steps):
+@click.option('--fresh', is_flag=True, help='Start without loading persisted memory/weights')
+def run(env, steps, fresh):
     """Run the cognitive simulation."""
-    sim = CognitiveSimulation(env)
+    sim = CognitiveSimulation(env, fresh=fresh)
     sim.run_training_loop(steps)
 
 @cli.command()

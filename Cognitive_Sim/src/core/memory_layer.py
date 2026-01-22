@@ -1,150 +1,625 @@
-import time
 import json
-import numpy as np
+import math
+import heapq
+import time
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+
 from src.config import MemoryConfig
-from src.core.entropy_calculator import EntropyCalculator
 from src.utils.logger import logger
 
+
 class MemoryLayer:
+    """A 'Smart Database' implementing an Ebbinghaus-style forgetting curve.
+
+    Persistence model
+    - Writes a JSON *index* with metadata (timestamps, stability, blob path)
+    - Writes per-memory payload blobs with `torch.save` (safe for tensors)
+    - Loads index on startup; payloads are lazy-loaded on demand
     """
-    A 'Smart Database' that implements the Ebbinghaus Forgetting Curve.
-    Acts as a filter between the Agent and its Knowledge Base.
-    """
+
     def __init__(self, config: MemoryConfig):
         self.initial_retention = config.initial_retention
         self.decay_rate = config.decay_rate
         self.stability_threshold = config.stability_threshold
-        
-        # Memory store: {memory_id: {'data': ..., 'created_at': ..., 'stability': ..., 'last_access': ...}}
-        self.memories: Dict[str, Dict[str, Any]] = {}
-        self.entropy_calc = EntropyCalculator()
-        
+
+        # Policy knobs (kept in memory layer so scheduling can be efficient)
+        self.review_threshold = float(getattr(config, "review_threshold", 0.4))
+        self.recall_failure_retention = float(getattr(config, "recall_failure_retention", 0.15))
+
         # Persistence settings
-        self.persistence_path = Path("data/memory_store.json")
+        self.store_dir = Path(getattr(config, "store_dir", "data/memory_store"))
+        self.index_path = Path(getattr(config, "index_path", "data/memory_index.json"))
+        self.eager_load = bool(getattr(config, "eager_load", False))
+
+        # Legacy path from earlier template (metadata-only JSON)
+        self.legacy_metadata_path = Path("data/memory_store.json")
+
+        # Memory store:
+        # {memory_id: {'data': Any|None, 'data_path': str, 'created_at': float,
+        #             'last_access': float, 'stability': float, 'access_count': int}}
+        self.memories: Dict[str, Dict[str, Any]] = {}
+
+        # Priority queue for "due" reviews.
+        # heap entries: (next_review_at_epoch_seconds, seq, memory_id)
+        self._review_heap: List[Tuple[float, int, str]] = []
+        self._scheduled_due: Dict[str, float] = {}
+        self._heap_seq = 0
+
+    def _memory_blob_path(self, memory_id: str) -> Path:
+        return self.store_dir / f"{memory_id}.pt"
+
+    @staticmethod
+    def _cpuify(obj: Any) -> Any:
+        """Move tensors (and nested tensors) to CPU for safe serialization."""
+
+        if torch.is_tensor(obj):
+            return obj.detach().cpu()
+        if isinstance(obj, dict):
+            return {k: MemoryLayer._cpuify(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            converted = [MemoryLayer._cpuify(v) for v in obj]
+            return converted if isinstance(obj, list) else tuple(converted)
+        return obj
+
+    def _calculate_retention(self, memory: Dict[str, Any]) -> float:
+        """R = exp(-(decay_rate * t)/stability)."""
+
+        elapsed = time.time() - float(memory["last_access"])
+        stability = max(1e-6, float(memory["stability"]))
+        return float(np.exp(-(float(self.decay_rate) * elapsed) / stability))
+
+    def _next_review_at(self, memory: Dict[str, Any], threshold: float) -> float:
+        """Compute the time when retention will cross below `threshold`."""
+
+        last_access = float(memory.get("last_access", time.time()))
+        stability = max(1e-6, float(memory.get("stability", 1.0)))
+        if float(self.decay_rate) <= 0:
+            return float("inf")
+
+        threshold = float(np.clip(threshold, 1e-6, 0.999999))
+        due_in = (-math.log(threshold) * stability) / float(self.decay_rate)
+        return last_access + max(0.0, due_in)
+
+    def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
+        if memory_id not in self.memories:
+            return
+
+        threshold = self.review_threshold if threshold is None else float(threshold)
+        due_at = self._next_review_at(self.memories[memory_id], threshold)
+        self._scheduled_due[memory_id] = due_at
+
+        self._heap_seq += 1
+        heapq.heappush(self._review_heap, (due_at, self._heap_seq, memory_id))
+
+    def _cleanup_heap(self) -> None:
+        """Remove stale heap entries after rescheduling."""
+
+        while self._review_heap:
+            due_at, _, mem_id = self._review_heap[0]
+            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
+                return
+            heapq.heappop(self._review_heap)
 
     def add_memory(self, memory_id: str, data: Any, initial_stability: float = 1.0):
         """Store a new memory trace."""
+
         current_time = time.time()
-        
-        # Convert tensors to list for JSON serialization if needed, 
-        # or rely on a separate serializer. For now, we assume data is serializable or handled elsewhere.
-        # Ideally, large data blobs (images) stay on disk, we just store the metadata here.
-        
         self.memories[memory_id] = {
-            'data': data, # In a real app, this might just be a pointer/filepath
-            'created_at': current_time,
-            'last_access': current_time,
-            'stability': initial_stability,
-            'access_count': 1
+            "data": data,
+            "data_path": str(self._memory_blob_path(memory_id)),
+            "created_at": current_time,
+            "last_access": current_time,
+            "stability": float(initial_stability),
+            "access_count": 1,
         }
+        self._schedule_review(memory_id)
         logger.debug(f"Memory added: {memory_id}")
 
     def retrieve_memory(self, memory_id: str) -> Optional[Any]:
+        """Retrieve memory if it hasn't decayed below recall-failure threshold.
+
+        On successful retrieval, updates stability (spaced repetition reinforcement).
         """
-        Retrieve memory if it hasn't decayed below threshold.
-        Updates stability on successful retrieval.
-        """
+
         if memory_id not in self.memories:
             return None
 
         memory = self.memories[memory_id]
+
+        # Lazy-load payload if necessary
+        if memory.get("data") is None:
+            data_path = Path(memory.get("data_path", self._memory_blob_path(memory_id)))
+            if data_path.exists():
+                try:
+                    memory["data"] = torch.load(data_path, map_location="cpu")
+                except Exception as e:
+                    logger.warning(f"Failed to load memory payload for {memory_id} from {data_path}: {e}")
+                    memory["data"] = None
+
         retention = self._calculate_retention(memory)
-        
-        # BIOLOGICAL CONSTRAINT:
-        # If retention is too low, the synapse has failed to fire.
-        # The memory is effectively "gone" for this moment.
-        if retention < 0.15: # Threshold for "Recall Failure"
+
+        # BIOLOGICAL CONSTRAINT: recall failure
+        if retention < self.recall_failure_retention:
             logger.info(f"Recall Failed for {memory_id} (R={retention:.2f})")
             return None
 
-        # Update access stats (Spaced Repetition)
+        # Reinforce on successful access
         self._reinforce_memory(memory_id)
-        return memory['data']
+        return memory.get("data")
 
-    def _calculate_retention(self, memory: Dict[str, Any]) -> float:
-        """
-        Calculate current retention strength based on Ebbinghaus curve.
-        R = e^(-decay * t / stability)
-        """
-        elapsed = time.time() - memory['last_access']
-        # We use a scalar to make seconds relevant for the simulation speed
-        # In real-time apps, this might be days.
-        return np.exp(-(self.decay_rate * elapsed) / memory['stability'])
+    def _reinforce_memory(self, memory_id: str) -> None:
+        """Strengthen memory stability upon access (Spaced Repetition principle)."""
 
-    def _reinforce_memory(self, memory_id: str):
-        """
-        Strengthen memory stability upon access (Spaced Repetition principle).
-        """
         memory = self.memories[memory_id]
         current_time = time.time()
-        elapsed = current_time - memory['last_access']
-        
+        elapsed = current_time - float(memory["last_access"])
+
         # Stability increase depends on difficulty of retrieval (time passed)
-        # S_new = S_old * (1 + factor)
-        stability_gain = 0.1 * elapsed  
-        
-        memory['stability'] += stability_gain
-        memory['last_access'] = current_time
-        memory['access_count'] += 1
+        stability_gain = 0.1 * elapsed
 
-    def get_at_risk_memories(self, threshold: float = 0.3) -> List[str]:
-        """Identify memories that are fading."""
-        at_risk = []
-        for mem_id, memory in self.memories.items():
-            if self._calculate_retention(memory) < threshold:
-                at_risk.append(mem_id)
-        return at_risk
+        memory["stability"] = float(memory["stability"]) + float(stability_gain)
+        memory["last_access"] = current_time
+        memory["access_count"] = int(memory["access_count"]) + 1
+        self._schedule_review(memory_id)
 
-    def save_state(self):
-        """Persist memory metadata to disk."""
-        self.persistence_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Deep copy to avoid mutating runtime state during serialization
-        # Convert any numpy types to python native types
-        serializable_memories = {}
-        for k, v in self.memories.items():
-            mem_copy = v.copy()
-            # Handle potentially non-serializable data fields
-            if 'input' in mem_copy['data'] and hasattr(mem_copy['data']['input'], 'tolist'):
-                 # It's likely a Tensor/Numpy array
-                 # For the 'Plug and Play' template, we skip saving heavy data in JSON
-                 # We assume 'data' is lightweight or we just save metadata
-                 pass
-            
-            serializable_memories[k] = mem_copy
+    def has_at_risk_memory(self, threshold: Optional[float] = None) -> bool:
+        """Fast check: is any memory currently below `threshold`?"""
 
-        with open(self.persistence_path, 'w') as f:
-            # We use a custom encoder or just exclude complex data objects for now
-            # For this MVP, we assume the 'data' field is JSON safe or we sanitize it
-            # To be safe, we only save metadata for the template
-            clean_dump = {
-                k: {
-                    'created_at': v['created_at'],
-                    'last_access': v['last_access'],
-                    'stability': v['stability'],
-                    'access_count': v['access_count'],
-                    # 'data': v['data'] # Uncomment if data is text/json-safe
-                } 
-                for k, v in serializable_memories.items()
+        threshold = self.review_threshold if threshold is None else float(threshold)
+
+        # If caller uses a different threshold than configured, fallback to early-exit scan.
+        if threshold != self.review_threshold:
+            for memory in self.memories.values():
+                if self._calculate_retention(memory) < threshold:
+                    return True
+            return False
+
+        self._cleanup_heap()
+        if not self._review_heap:
+            return False
+        due_at, _, _ = self._review_heap[0]
+        return due_at <= time.time()
+
+    def get_at_risk_memories(self, threshold: Optional[float] = None, limit: int = 1000) -> List[str]:
+        """Identify memories that are fading.
+
+        - If `threshold` matches configured review_threshold, uses the review heap.
+        - Otherwise falls back to scanning.
+        """
+
+        threshold = self.review_threshold if threshold is None else float(threshold)
+
+        if threshold != self.review_threshold:
+            at_risk: List[str] = []
+            for mem_id, memory in self.memories.items():
+                if self._calculate_retention(memory) < threshold:
+                    at_risk.append(mem_id)
+                    if len(at_risk) >= limit:
+                        break
+            return at_risk
+
+        self._cleanup_heap()
+        now = time.time()
+
+        popped: List[Tuple[float, int, str]] = []
+        due_ids: List[str] = []
+
+        while self._review_heap and len(due_ids) < limit:
+            due_at, seq, mem_id = self._review_heap[0]
+            if due_at > now:
+                break
+            heapq.heappop(self._review_heap)
+            popped.append((due_at, seq, mem_id))
+            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
+                due_ids.append(mem_id)
+
+        for entry in popped:
+            heapq.heappush(self._review_heap, entry)
+
+        return due_ids
+
+    def get_due_review_count(self, limit: int = 1000) -> int:
+        return len(self.get_at_risk_memories(limit=limit))
+
+    def save_state(self) -> None:
+        """Persist memory index (JSON) and per-memory payload blobs."""
+
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+
+        index_dump: Dict[str, Dict[str, Any]] = {}
+        for mem_id, mem in self.memories.items():
+            data_path = Path(mem.get("data_path", self._memory_blob_path(mem_id)))
+
+            payload = mem.get("data")
+            if payload is not None:
+                try:
+                    torch.save(self._cpuify(payload), data_path)
+                except Exception as e:
+                    logger.warning(f"Failed to persist memory payload for {mem_id} to {data_path}: {e}")
+
+            index_dump[mem_id] = {
+                "created_at": float(mem.get("created_at", time.time())),
+                "last_access": float(mem.get("last_access", time.time())),
+                "stability": float(mem.get("stability", 1.0)),
+                "access_count": int(mem.get("access_count", 0)),
+                "data_path": str(data_path),
             }
-            json.dump(clean_dump, f, indent=2)
-        
-        logger.info(f"Memory State saved to {self.persistence_path}")
 
-    def load_state(self):
-        """Load memory metadata from disk."""
-        if not self.persistence_path.exists():
+        with open(self.index_path, "w") as f:
+            json.dump(index_dump, f, indent=2)
+
+        logger.info(f"Memory State saved to {self.index_path} (blobs in {self.store_dir})")
+
+    def load_state(self) -> None:
+        """Load memory metadata.
+
+        Preferred: `index_path`. Legacy: `legacy_metadata_path` (metadata-only).
+        """
+
+        self.memories = {}
+        self._review_heap.clear()
+        self._scheduled_due.clear()
+        self._heap_seq = 0
+
+        if self.index_path.exists():
+            with open(self.index_path, "r") as f:
+                index = json.load(f)
+
+            for mem_id, meta in index.items():
+                rec: Dict[str, Any] = {
+                    "created_at": float(meta.get("created_at", time.time())),
+                    "last_access": float(meta.get("last_access", time.time())),
+                    "stability": float(meta.get("stability", 1.0)),
+                    "access_count": int(meta.get("access_count", 0)),
+                    "data_path": str(meta.get("data_path", self._memory_blob_path(mem_id))),
+                    "data": None,
+                }
+
+                if self.eager_load:
+                    data_path = Path(rec["data_path"])
+                    rec["data"] = torch.load(data_path, map_location="cpu") if data_path.exists() else None
+
+                self.memories[mem_id] = rec
+                self._schedule_review(mem_id)
+
+            logger.info(f"Memory State loaded: {len(self.memories)} items from {self.index_path}.")
             return
 
-        with open(self.persistence_path, 'r') as f:
-            data = json.load(f)
-        
-        # When loading, we need to handle the 'Offline Time'
-        # The system was off. Time has passed.
-        # We don't change timestamps (they are absolute), 
-        # but the next _calculate_retention() call will naturally see a HUGE elapsed time.
-        
-        self.memories = data
-        logger.info(f"Memory State loaded: {len(self.memories)} items.")
+        # Legacy metadata-only format
+        if self.legacy_metadata_path.exists():
+            with open(self.legacy_metadata_path, "r") as f:
+                legacy = json.load(f)
+
+            for mem_id, meta in legacy.items():
+                self.memories[mem_id] = {
+                    "created_at": float(meta.get("created_at", time.time())),
+                    "last_access": float(meta.get("last_access", time.time())),
+                    "stability": float(meta.get("stability", 1.0)),
+                    "access_count": int(meta.get("access_count", 0)),
+                    "data_path": str(self._memory_blob_path(mem_id)),
+                    "data": None,
+                }
+                self._schedule_review(mem_id)
+
+            logger.info(
+                f"Legacy memory metadata loaded: {len(self.memories)} items from {self.legacy_metadata_path}. "
+                f"(payloads missing; next save will write {self.index_path})"
+            )
+
+import json
+import math
+import heapq
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+
+from src.config import MemoryConfig
+from src.utils.logger import logger
+
+
+class MemoryLayer:
+    """A 'Smart Database' implementing an Ebbinghaus-style forgetting curve.
+
+    Persistence model
+    - Writes a JSON *index* with metadata (timestamps, stability, blob path)
+    - Writes per-memory payload blobs with `torch.save` (safe for tensors)
+    - Loads index on startup; payloads are lazy-loaded on demand
+    """
+
+    def __init__(self, config: MemoryConfig):
+        self.initial_retention = config.initial_retention
+        self.decay_rate = config.decay_rate
+        self.stability_threshold = config.stability_threshold
+
+        # Policy knobs (kept in memory layer so scheduling can be efficient)
+        self.review_threshold = float(getattr(config, "review_threshold", 0.4))
+        self.recall_failure_retention = float(getattr(config, "recall_failure_retention", 0.15))
+
+        # Persistence settings
+        self.store_dir = Path(getattr(config, "store_dir", "data/memory_store"))
+        self.index_path = Path(getattr(config, "index_path", "data/memory_index.json"))
+        self.eager_load = bool(getattr(config, "eager_load", False))
+
+        # Legacy path from earlier template (metadata-only JSON)
+        self.legacy_metadata_path = Path("data/memory_store.json")
+
+        # Memory store:
+        # {memory_id: {'data': Any|None, 'data_path': str, 'created_at': float,
+        #             'last_access': float, 'stability': float, 'access_count': int}}
+        self.memories: Dict[str, Dict[str, Any]] = {}
+
+        # Priority queue for "due" reviews.
+        # heap entries: (next_review_at_epoch_seconds, seq, memory_id)
+        self._review_heap: List[Tuple[float, int, str]] = []
+        self._scheduled_due: Dict[str, float] = {}
+        self._heap_seq = 0
+
+    def _memory_blob_path(self, memory_id: str) -> Path:
+        return self.store_dir / f"{memory_id}.pt"
+
+    @staticmethod
+    def _cpuify(obj: Any) -> Any:
+        """Move tensors (and nested tensors) to CPU for safe serialization."""
+
+        if torch.is_tensor(obj):
+            return obj.detach().cpu()
+        if isinstance(obj, dict):
+            return {k: MemoryLayer._cpuify(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            converted = [MemoryLayer._cpuify(v) for v in obj]
+            return converted if isinstance(obj, list) else tuple(converted)
+        return obj
+
+    def _calculate_retention(self, memory: Dict[str, Any]) -> float:
+        """R = exp(-(decay_rate * t)/stability)."""
+
+        elapsed = time.time() - float(memory["last_access"])
+        stability = max(1e-6, float(memory["stability"]))
+        return float(np.exp(-(float(self.decay_rate) * elapsed) / stability))
+
+    def _next_review_at(self, memory: Dict[str, Any], threshold: float) -> float:
+        """Compute the time when retention will cross below `threshold`."""
+
+        last_access = float(memory.get("last_access", time.time()))
+        stability = max(1e-6, float(memory.get("stability", 1.0)))
+        if float(self.decay_rate) <= 0:
+            return float("inf")
+
+        threshold = float(np.clip(threshold, 1e-6, 0.999999))
+        due_in = (-math.log(threshold) * stability) / float(self.decay_rate)
+        return last_access + max(0.0, due_in)
+
+    def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
+        if memory_id not in self.memories:
+            return
+
+        threshold = self.review_threshold if threshold is None else float(threshold)
+        due_at = self._next_review_at(self.memories[memory_id], threshold)
+        self._scheduled_due[memory_id] = due_at
+
+        self._heap_seq += 1
+        heapq.heappush(self._review_heap, (due_at, self._heap_seq, memory_id))
+
+    def _cleanup_heap(self) -> None:
+        """Remove stale heap entries after rescheduling."""
+
+        while self._review_heap:
+            due_at, _, mem_id = self._review_heap[0]
+            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
+                return
+            heapq.heappop(self._review_heap)
+
+    def add_memory(self, memory_id: str, data: Any, initial_stability: float = 1.0):
+        """Store a new memory trace."""
+
+        current_time = time.time()
+        self.memories[memory_id] = {
+            "data": data,
+            "data_path": str(self._memory_blob_path(memory_id)),
+            "created_at": current_time,
+            "last_access": current_time,
+            "stability": float(initial_stability),
+            "access_count": 1,
+        }
+        self._schedule_review(memory_id)
+        logger.debug(f"Memory added: {memory_id}")
+
+    def retrieve_memory(self, memory_id: str) -> Optional[Any]:
+        """Retrieve memory if it hasn't decayed below recall-failure threshold.
+
+        On successful retrieval, updates stability (spaced repetition reinforcement).
+        """
+
+        if memory_id not in self.memories:
+            return None
+
+        memory = self.memories[memory_id]
+
+        # Lazy-load payload if necessary
+        if memory.get("data") is None:
+            data_path = Path(memory.get("data_path", self._memory_blob_path(memory_id)))
+            if data_path.exists():
+                try:
+                    memory["data"] = torch.load(data_path, map_location="cpu")
+                except Exception as e:
+                    logger.warning(f"Failed to load memory payload for {memory_id} from {data_path}: {e}")
+                    memory["data"] = None
+
+        retention = self._calculate_retention(memory)
+
+        # BIOLOGICAL CONSTRAINT: recall failure
+        if retention < self.recall_failure_retention:
+            logger.info(f"Recall Failed for {memory_id} (R={retention:.2f})")
+            return None
+
+        # Reinforce on successful access
+        self._reinforce_memory(memory_id)
+        return memory.get("data")
+
+    def _reinforce_memory(self, memory_id: str) -> None:
+        """Strengthen memory stability upon access (Spaced Repetition principle)."""
+
+        memory = self.memories[memory_id]
+        current_time = time.time()
+        elapsed = current_time - float(memory["last_access"])
+
+        # Stability increase depends on difficulty of retrieval (time passed)
+        stability_gain = 0.1 * elapsed
+
+        memory["stability"] = float(memory["stability"]) + float(stability_gain)
+        memory["last_access"] = current_time
+        memory["access_count"] = int(memory["access_count"]) + 1
+        self._schedule_review(memory_id)
+
+    def has_at_risk_memory(self, threshold: Optional[float] = None) -> bool:
+        """Fast check: is any memory currently below `threshold`?"""
+
+        threshold = self.review_threshold if threshold is None else float(threshold)
+
+        # If caller uses a different threshold than configured, fallback to early-exit scan.
+        if threshold != self.review_threshold:
+            for memory in self.memories.values():
+                if self._calculate_retention(memory) < threshold:
+                    return True
+            return False
+
+        self._cleanup_heap()
+        if not self._review_heap:
+            return False
+        due_at, _, _ = self._review_heap[0]
+        return due_at <= time.time()
+
+    def get_at_risk_memories(self, threshold: Optional[float] = None, limit: int = 1000) -> List[str]:
+        """Identify memories that are fading.
+
+        - If `threshold` matches configured review_threshold, uses the review heap.
+        - Otherwise falls back to scanning.
+        """
+
+        threshold = self.review_threshold if threshold is None else float(threshold)
+
+        if threshold != self.review_threshold:
+            at_risk: List[str] = []
+            for mem_id, memory in self.memories.items():
+                if self._calculate_retention(memory) < threshold:
+                    at_risk.append(mem_id)
+                    if len(at_risk) >= limit:
+                        break
+            return at_risk
+
+        self._cleanup_heap()
+        now = time.time()
+
+        popped: List[Tuple[float, int, str]] = []
+        due_ids: List[str] = []
+
+        while self._review_heap and len(due_ids) < limit:
+            due_at, seq, mem_id = self._review_heap[0]
+            if due_at > now:
+                break
+            heapq.heappop(self._review_heap)
+            popped.append((due_at, seq, mem_id))
+            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
+                due_ids.append(mem_id)
+
+        for entry in popped:
+            heapq.heappush(self._review_heap, entry)
+
+        return due_ids
+
+    def get_due_review_count(self, limit: int = 1000) -> int:
+        return len(self.get_at_risk_memories(limit=limit))
+
+    def save_state(self) -> None:
+        """Persist memory index (JSON) and per-memory payload blobs."""
+
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+
+        index_dump: Dict[str, Dict[str, Any]] = {}
+        for mem_id, mem in self.memories.items():
+            data_path = Path(mem.get("data_path", self._memory_blob_path(mem_id)))
+
+            payload = mem.get("data")
+            if payload is not None:
+                try:
+                    torch.save(self._cpuify(payload), data_path)
+                except Exception as e:
+                    logger.warning(f"Failed to persist memory payload for {mem_id} to {data_path}: {e}")
+
+            index_dump[mem_id] = {
+                "created_at": float(mem.get("created_at", time.time())),
+                "last_access": float(mem.get("last_access", time.time())),
+                "stability": float(mem.get("stability", 1.0)),
+                "access_count": int(mem.get("access_count", 0)),
+                "data_path": str(data_path),
+            }
+
+        with open(self.index_path, "w") as f:
+            json.dump(index_dump, f, indent=2)
+
+        logger.info(f"Memory State saved to {self.index_path} (blobs in {self.store_dir})")
+
+    def load_state(self) -> None:
+        """Load memory metadata.
+
+        Preferred: `index_path`. Legacy: `legacy_metadata_path` (metadata-only).
+        """
+
+        self.memories = {}
+        self._review_heap.clear()
+        self._scheduled_due.clear()
+        self._heap_seq = 0
+
+        if self.index_path.exists():
+            with open(self.index_path, "r") as f:
+                index = json.load(f)
+
+            for mem_id, meta in index.items():
+                rec: Dict[str, Any] = {
+                    "created_at": float(meta.get("created_at", time.time())),
+                    "last_access": float(meta.get("last_access", time.time())),
+                    "stability": float(meta.get("stability", 1.0)),
+                    "access_count": int(meta.get("access_count", 0)),
+                    "data_path": str(meta.get("data_path", self._memory_blob_path(mem_id))),
+                    "data": None,
+                }
+
+                if self.eager_load:
+                    data_path = Path(rec["data_path"])
+                    rec["data"] = torch.load(data_path, map_location="cpu") if data_path.exists() else None
+
+                self.memories[mem_id] = rec
+                self._schedule_review(mem_id)
+
+            logger.info(f"Memory State loaded: {len(self.memories)} items from {self.index_path}.")
+            return
+
+        # Legacy metadata-only format
+        if self.legacy_metadata_path.exists():
+            with open(self.legacy_metadata_path, "r") as f:
+                legacy = json.load(f)
+
+            for mem_id, meta in legacy.items():
+                self.memories[mem_id] = {
+                    "created_at": float(meta.get("created_at", time.time())),
+                    "last_access": float(meta.get("last_access", time.time())),
+                    "stability": float(meta.get("stability", 1.0)),
+                    "access_count": int(meta.get("access_count", 0)),
+                    "data_path": str(self._memory_blob_path(mem_id)),
+                    "data": None,
+                }
+                self._schedule_review(mem_id)
+
+            logger.info(
+                f"Legacy memory metadata loaded: {len(self.memories)} items from {self.legacy_metadata_path}. "
+                f"(payloads missing; next save will write {self.index_path})"
+            )
