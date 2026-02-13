@@ -1,8 +1,10 @@
+import heapq
 import json
 import math
-import heapq
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -12,50 +14,55 @@ from src.config import MemoryConfig
 from src.utils.logger import logger
 
 
-class MemoryLayer:
-    """A 'Smart Database' implementing an Ebbinghaus-style forgetting curve.
+@dataclass
+class MemoryRecord:
+    key: str
+    created_at: float
+    last_reviewed: float
+    last_access: float
+    strength: float
+    stability: float
+    decay_rate: float
+    retrieval_difficulty: float
+    interval_seconds: float
+    repetitions: int
+    lapses: int
+    next_review_at: float
+    forgotten: bool
+    access_count: int
+    data_path: str
+    embedding: Optional[List[float]] = None
 
-    Persistence model
-    - Writes a JSON *index* with metadata (timestamps, stability, blob path)
-    - Writes per-memory payload blobs with `torch.save` (safe for tensors)
-    - Loads index on startup; payloads are lazy-loaded on demand
-    """
+
+class MemoryLayer:
+    """Persistent memory store with Ebbinghaus decay and spaced repetition scheduling."""
 
     def __init__(self, config: MemoryConfig):
-        self.initial_retention = config.initial_retention
-        self.decay_rate = config.decay_rate
-        self.stability_threshold = config.stability_threshold
+        self.initial_retention = float(config.initial_retention)
+        self.decay_rate = float(config.decay_rate)
+        self.stability_threshold = float(config.stability_threshold)
+        self.review_threshold = float(config.review_threshold)
+        self.recall_failure_retention = float(config.recall_failure_retention)
+        self.min_stability = float(config.min_stability)
+        self.default_difficulty = float(config.default_difficulty)
+        self.initial_interval_seconds = float(config.initial_interval_seconds)
+        self.relearn_penalty_factor = float(config.relearn_penalty_factor)
 
-        # Policy knobs (kept in memory layer so scheduling can be efficient)
-        self.review_threshold = float(getattr(config, "review_threshold", 0.4))
-        self.recall_failure_retention = float(getattr(config, "recall_failure_retention", 0.15))
-
-        # Persistence settings
-        self.store_dir = Path(getattr(config, "store_dir", "data/memory_store"))
-        self.index_path = Path(getattr(config, "index_path", "data/memory_index.json"))
-        self.eager_load = bool(getattr(config, "eager_load", False))
-
-        # Legacy path from earlier template (metadata-only JSON)
+        self.store_dir = Path(config.store_dir)
+        self.index_path = Path(config.index_path)
+        self.eager_load = bool(config.eager_load)
         self.legacy_metadata_path = Path("data/memory_store.json")
 
-        # Memory store:
-        # {memory_id: {'data': Any|None, 'data_path': str, 'created_at': float,
-        #             'last_access': float, 'stability': float, 'access_count': int}}
-        self.memories: Dict[str, Dict[str, Any]] = {}
+        self.memories: Dict[str, MemoryRecord] = {}
+        self._payload_cache: Dict[str, Any] = {}
 
-        # Priority queue for "due" reviews.
-        # heap entries: (next_review_at_epoch_seconds, seq, memory_id)
         self._review_heap: List[Tuple[float, int, str]] = []
         self._scheduled_due: Dict[str, float] = {}
         self._heap_seq = 0
-
-    def _memory_blob_path(self, memory_id: str) -> Path:
-        return self.store_dir / f"{memory_id}.pt"
+        self._lock = RLock()
 
     @staticmethod
     def _cpuify(obj: Any) -> Any:
-        """Move tensors (and nested tensors) to CPU for safe serialization."""
-
         if torch.is_tensor(obj):
             return obj.detach().cpu()
         if isinstance(obj, dict):
@@ -65,561 +72,363 @@ class MemoryLayer:
             return converted if isinstance(obj, list) else tuple(converted)
         return obj
 
-    def _calculate_retention(self, memory: Dict[str, Any]) -> float:
-        """R = exp(-(decay_rate * t)/stability)."""
-
-        elapsed = time.time() - float(memory["last_access"])
-        stability = max(1e-6, float(memory["stability"]))
-        return float(np.exp(-(float(self.decay_rate) * elapsed) / stability))
-
-    def _next_review_at(self, memory: Dict[str, Any], threshold: float) -> float:
-        """Compute the time when retention will cross below `threshold`."""
-
-        last_access = float(memory.get("last_access", time.time()))
-        stability = max(1e-6, float(memory.get("stability", 1.0)))
-        if float(self.decay_rate) <= 0:
-            return float("inf")
-
-        threshold = float(np.clip(threshold, 1e-6, 0.999999))
-        due_in = (-math.log(threshold) * stability) / float(self.decay_rate)
-        return last_access + max(0.0, due_in)
-
-    def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
-        if memory_id not in self.memories:
-            return
-
-        threshold = self.review_threshold if threshold is None else float(threshold)
-        due_at = self._next_review_at(self.memories[memory_id], threshold)
-        self._scheduled_due[memory_id] = due_at
-
-        self._heap_seq += 1
-        heapq.heappush(self._review_heap, (due_at, self._heap_seq, memory_id))
-
-    def _cleanup_heap(self) -> None:
-        """Remove stale heap entries after rescheduling."""
-
-        while self._review_heap:
-            due_at, _, mem_id = self._review_heap[0]
-            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
-                return
-            heapq.heappop(self._review_heap)
-
-    def add_memory(self, memory_id: str, data: Any, initial_stability: float = 1.0):
-        """Store a new memory trace."""
-
-        current_time = time.time()
-        self.memories[memory_id] = {
-            "data": data,
-            "data_path": str(self._memory_blob_path(memory_id)),
-            "created_at": current_time,
-            "last_access": current_time,
-            "stability": float(initial_stability),
-            "access_count": 1,
-        }
-        self._schedule_review(memory_id)
-        logger.debug(f"Memory added: {memory_id}")
-
-    def retrieve_memory(self, memory_id: str) -> Optional[Any]:
-        """Retrieve memory if it hasn't decayed below recall-failure threshold.
-
-        On successful retrieval, updates stability (spaced repetition reinforcement).
-        """
-
-        if memory_id not in self.memories:
-            return None
-
-        memory = self.memories[memory_id]
-
-        # Lazy-load payload if necessary
-        if memory.get("data") is None:
-            data_path = Path(memory.get("data_path", self._memory_blob_path(memory_id)))
-            if data_path.exists():
-                try:
-                    memory["data"] = torch.load(data_path, map_location="cpu")
-                except Exception as e:
-                    logger.warning(f"Failed to load memory payload for {memory_id} from {data_path}: {e}")
-                    memory["data"] = None
-
-        retention = self._calculate_retention(memory)
-
-        # BIOLOGICAL CONSTRAINT: recall failure
-        if retention < self.recall_failure_retention:
-            logger.info(f"Recall Failed for {memory_id} (R={retention:.2f})")
-            return None
-
-        # Reinforce on successful access
-        self._reinforce_memory(memory_id)
-        return memory.get("data")
-
-    def _reinforce_memory(self, memory_id: str) -> None:
-        """Strengthen memory stability upon access (Spaced Repetition principle)."""
-
-        memory = self.memories[memory_id]
-        current_time = time.time()
-        elapsed = current_time - float(memory["last_access"])
-
-        # Stability increase depends on difficulty of retrieval (time passed)
-        stability_gain = 0.1 * elapsed
-
-        memory["stability"] = float(memory["stability"]) + float(stability_gain)
-        memory["last_access"] = current_time
-        memory["access_count"] = int(memory["access_count"]) + 1
-        self._schedule_review(memory_id)
-
-    def has_at_risk_memory(self, threshold: Optional[float] = None) -> bool:
-        """Fast check: is any memory currently below `threshold`?"""
-
-        threshold = self.review_threshold if threshold is None else float(threshold)
-
-        # If caller uses a different threshold than configured, fallback to early-exit scan.
-        if threshold != self.review_threshold:
-            for memory in self.memories.values():
-                if self._calculate_retention(memory) < threshold:
-                    return True
-            return False
-
-        self._cleanup_heap()
-        if not self._review_heap:
-            return False
-        due_at, _, _ = self._review_heap[0]
-        return due_at <= time.time()
-
-    def get_at_risk_memories(self, threshold: Optional[float] = None, limit: int = 1000) -> List[str]:
-        """Identify memories that are fading.
-
-        - If `threshold` matches configured review_threshold, uses the review heap.
-        - Otherwise falls back to scanning.
-        """
-
-        threshold = self.review_threshold if threshold is None else float(threshold)
-
-        if threshold != self.review_threshold:
-            at_risk: List[str] = []
-            for mem_id, memory in self.memories.items():
-                if self._calculate_retention(memory) < threshold:
-                    at_risk.append(mem_id)
-                    if len(at_risk) >= limit:
-                        break
-            return at_risk
-
-        self._cleanup_heap()
-        now = time.time()
-
-        popped: List[Tuple[float, int, str]] = []
-        due_ids: List[str] = []
-
-        while self._review_heap and len(due_ids) < limit:
-            due_at, seq, mem_id = self._review_heap[0]
-            if due_at > now:
-                break
-            heapq.heappop(self._review_heap)
-            popped.append((due_at, seq, mem_id))
-            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
-                due_ids.append(mem_id)
-
-        for entry in popped:
-            heapq.heappush(self._review_heap, entry)
-
-        return due_ids
-
-    def get_due_review_count(self, limit: int = 1000) -> int:
-        return len(self.get_at_risk_memories(limit=limit))
-
-    def save_state(self) -> None:
-        """Persist memory index (JSON) and per-memory payload blobs."""
-
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        self.store_dir.mkdir(parents=True, exist_ok=True)
-
-        index_dump: Dict[str, Dict[str, Any]] = {}
-        for mem_id, mem in self.memories.items():
-            data_path = Path(mem.get("data_path", self._memory_blob_path(mem_id)))
-
-            payload = mem.get("data")
-            if payload is not None:
-                try:
-                    torch.save(self._cpuify(payload), data_path)
-                except Exception as e:
-                    logger.warning(f"Failed to persist memory payload for {mem_id} to {data_path}: {e}")
-
-            index_dump[mem_id] = {
-                "created_at": float(mem.get("created_at", time.time())),
-                "last_access": float(mem.get("last_access", time.time())),
-                "stability": float(mem.get("stability", 1.0)),
-                "access_count": int(mem.get("access_count", 0)),
-                "data_path": str(data_path),
-            }
-
-        with open(self.index_path, "w") as f:
-            json.dump(index_dump, f, indent=2)
-
-        logger.info(f"Memory State saved to {self.index_path} (blobs in {self.store_dir})")
-
-    def load_state(self) -> None:
-        """Load memory metadata.
-
-        Preferred: `index_path`. Legacy: `legacy_metadata_path` (metadata-only).
-        """
-
-        self.memories = {}
-        self._review_heap.clear()
-        self._scheduled_due.clear()
-        self._heap_seq = 0
-
-        if self.index_path.exists():
-            with open(self.index_path, "r") as f:
-                index = json.load(f)
-
-            for mem_id, meta in index.items():
-                rec: Dict[str, Any] = {
-                    "created_at": float(meta.get("created_at", time.time())),
-                    "last_access": float(meta.get("last_access", time.time())),
-                    "stability": float(meta.get("stability", 1.0)),
-                    "access_count": int(meta.get("access_count", 0)),
-                    "data_path": str(meta.get("data_path", self._memory_blob_path(mem_id))),
-                    "data": None,
-                }
-
-                if self.eager_load:
-                    data_path = Path(rec["data_path"])
-                    rec["data"] = torch.load(data_path, map_location="cpu") if data_path.exists() else None
-
-                self.memories[mem_id] = rec
-                self._schedule_review(mem_id)
-
-            logger.info(f"Memory State loaded: {len(self.memories)} items from {self.index_path}.")
-            return
-
-        # Legacy metadata-only format
-        if self.legacy_metadata_path.exists():
-            with open(self.legacy_metadata_path, "r") as f:
-                legacy = json.load(f)
-
-            for mem_id, meta in legacy.items():
-                self.memories[mem_id] = {
-                    "created_at": float(meta.get("created_at", time.time())),
-                    "last_access": float(meta.get("last_access", time.time())),
-                    "stability": float(meta.get("stability", 1.0)),
-                    "access_count": int(meta.get("access_count", 0)),
-                    "data_path": str(self._memory_blob_path(mem_id)),
-                    "data": None,
-                }
-                self._schedule_review(mem_id)
-
-            logger.info(
-                f"Legacy memory metadata loaded: {len(self.memories)} items from {self.legacy_metadata_path}. "
-                f"(payloads missing; next save will write {self.index_path})"
-            )
-
-import json
-import math
-import heapq
-import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
-import torch
-
-from src.config import MemoryConfig
-from src.utils.logger import logger
-
-
-class MemoryLayer:
-    """A 'Smart Database' implementing an Ebbinghaus-style forgetting curve.
-
-    Persistence model
-    - Writes a JSON *index* with metadata (timestamps, stability, blob path)
-    - Writes per-memory payload blobs with `torch.save` (safe for tensors)
-    - Loads index on startup; payloads are lazy-loaded on demand
-    """
-
-    def __init__(self, config: MemoryConfig):
-        self.initial_retention = config.initial_retention
-        self.decay_rate = config.decay_rate
-        self.stability_threshold = config.stability_threshold
-
-        # Policy knobs (kept in memory layer so scheduling can be efficient)
-        self.review_threshold = float(getattr(config, "review_threshold", 0.4))
-        self.recall_failure_retention = float(getattr(config, "recall_failure_retention", 0.15))
-
-        # Persistence settings
-        self.store_dir = Path(getattr(config, "store_dir", "data/memory_store"))
-        self.index_path = Path(getattr(config, "index_path", "data/memory_index.json"))
-        self.eager_load = bool(getattr(config, "eager_load", False))
-
-        # Legacy path from earlier template (metadata-only JSON)
-        self.legacy_metadata_path = Path("data/memory_store.json")
-
-        # Memory store:
-        # {memory_id: {'data': Any|None, 'data_path': str, 'created_at': float,
-        #             'last_access': float, 'stability': float, 'access_count': int}}
-        self.memories: Dict[str, Dict[str, Any]] = {}
-
-        # Priority queue for "due" reviews.
-        # heap entries: (next_review_at_epoch_seconds, seq, memory_id)
-        self._review_heap: List[Tuple[float, int, str]] = []
-        self._scheduled_due: Dict[str, float] = {}
-        self._heap_seq = 0
-
     def _memory_blob_path(self, memory_id: str) -> Path:
-        return self.store_dir / f"{memory_id}.pt"
+        return self.store_dir / (memory_id + ".pt")
 
-    @staticmethod
-    def _cpuify(obj: Any) -> Any:
-        """Move tensors (and nested tensors) to CPU for safe serialization."""
+    def _calculate_retention(self, record: MemoryRecord, now: Optional[float] = None) -> float:
+        reference_time = time.time() if now is None else float(now)
+        elapsed = max(0.0, reference_time - float(record.last_reviewed))
+        stability = max(self.min_stability, float(record.stability))
+        exponent = -((float(record.decay_rate) * elapsed) / stability)
+        exponent = max(-700.0, min(700.0, exponent))
+        return float(math.exp(exponent)) * float(record.strength)
 
-        if torch.is_tensor(obj):
-            return obj.detach().cpu()
-        if isinstance(obj, dict):
-            return {k: MemoryLayer._cpuify(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            converted = [MemoryLayer._cpuify(v) for v in obj]
-            return converted if isinstance(obj, list) else tuple(converted)
-        return obj
-
-    def _calculate_retention(self, memory: Dict[str, Any]) -> float:
-        """R = exp(-(decay_rate * t)/stability)."""
-
-        elapsed = time.time() - float(memory["last_access"])
-        stability = max(1e-6, float(memory["stability"]))
-        return float(np.exp(-(float(self.decay_rate) * elapsed) / stability))
-
-    def _next_review_at(self, memory: Dict[str, Any], threshold: float) -> float:
-        """Compute the time when retention will cross below `threshold`."""
-
-        last_access = float(memory.get("last_access", time.time()))
-        stability = max(1e-6, float(memory.get("stability", 1.0)))
-        if float(self.decay_rate) <= 0:
+    def _next_review_at(self, record: MemoryRecord, threshold: Optional[float] = None) -> float:
+        threshold_value = self.review_threshold if threshold is None else float(threshold)
+        threshold_value = float(np.clip(threshold_value, 1e-6, 0.999999))
+        base = max(self.min_stability, float(record.stability))
+        if float(record.decay_rate) <= 0:
             return float("inf")
-
-        threshold = float(np.clip(threshold, 1e-6, 0.999999))
-        due_in = (-math.log(threshold) * stability) / float(self.decay_rate)
-        return last_access + max(0.0, due_in)
+        due_in = (-math.log(threshold_value) * base) / float(record.decay_rate)
+        due_in = max(float(record.interval_seconds), due_in)
+        return float(record.last_reviewed + due_in)
 
     def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
-        if memory_id not in self.memories:
+        record = self.memories.get(memory_id)
+        if record is None:
             return
 
-        threshold = self.review_threshold if threshold is None else float(threshold)
-        due_at = self._next_review_at(self.memories[memory_id], threshold)
+        due_at = self._next_review_at(record, threshold=threshold)
+        record.next_review_at = due_at
         self._scheduled_due[memory_id] = due_at
-
         self._heap_seq += 1
         heapq.heappush(self._review_heap, (due_at, self._heap_seq, memory_id))
 
     def _cleanup_heap(self) -> None:
-        """Remove stale heap entries after rescheduling."""
-
         while self._review_heap:
             due_at, _, mem_id = self._review_heap[0]
             if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
                 return
             heapq.heappop(self._review_heap)
 
-    def add_memory(self, memory_id: str, data: Any, initial_stability: float = 1.0):
-        """Store a new memory trace."""
+    def _serialize_record(self, record: MemoryRecord) -> Dict[str, Any]:
+        return asdict(record)
 
-        current_time = time.time()
-        self.memories[memory_id] = {
-            "data": data,
-            "data_path": str(self._memory_blob_path(memory_id)),
-            "created_at": current_time,
-            "last_access": current_time,
-            "stability": float(initial_stability),
-            "access_count": 1,
-        }
-        self._schedule_review(memory_id)
-        logger.debug(f"Memory added: {memory_id}")
+    def _deserialize_record(self, memory_id: str, payload: Dict[str, Any]) -> MemoryRecord:
+        return MemoryRecord(
+            key=payload.get("key", memory_id),
+            created_at=float(payload.get("created_at", time.time())),
+            last_reviewed=float(payload.get("last_reviewed", payload.get("last_access", time.time()))),
+            last_access=float(payload.get("last_access", time.time())),
+            strength=float(payload.get("strength", 1.0)),
+            stability=max(self.min_stability, float(payload.get("stability", 1.0))),
+            decay_rate=float(payload.get("decay_rate", self.decay_rate)),
+            retrieval_difficulty=float(payload.get("retrieval_difficulty", self.default_difficulty)),
+            interval_seconds=float(payload.get("interval_seconds", self.initial_interval_seconds)),
+            repetitions=int(payload.get("repetitions", 0)),
+            lapses=int(payload.get("lapses", 0)),
+            next_review_at=float(payload.get("next_review_at", time.time())),
+            forgotten=bool(payload.get("forgotten", False)),
+            access_count=int(payload.get("access_count", 0)),
+            data_path=str(payload.get("data_path", self._memory_blob_path(memory_id))),
+            embedding=payload.get("embedding"),
+        )
 
-    def retrieve_memory(self, memory_id: str) -> Optional[Any]:
-        """Retrieve memory if it hasn't decayed below recall-failure threshold.
+    def add_memory(
+        self,
+        memory_id: str,
+        data: Any,
+        initial_stability: float = 1.0,
+        embedding: Optional[List[float]] = None,
+    ) -> None:
+        now = time.time()
+        with self._lock:
+            record = MemoryRecord(
+                key=memory_id,
+                created_at=now,
+                last_reviewed=now,
+                last_access=now,
+                strength=1.0,
+                stability=max(self.min_stability, float(initial_stability)),
+                decay_rate=self.decay_rate,
+                retrieval_difficulty=self.default_difficulty,
+                interval_seconds=self.initial_interval_seconds,
+                repetitions=0,
+                lapses=0,
+                next_review_at=now + self.initial_interval_seconds,
+                forgotten=False,
+                access_count=1,
+                data_path=str(self._memory_blob_path(memory_id)),
+                embedding=embedding,
+            )
+            self.memories[memory_id] = record
+            self._payload_cache[memory_id] = data
+            self._schedule_review(memory_id)
 
-        On successful retrieval, updates stability (spaced repetition reinforcement).
-        """
-
-        if memory_id not in self.memories:
+    def _load_payload(self, memory_id: str) -> Optional[Any]:
+        if memory_id in self._payload_cache:
+            return self._payload_cache[memory_id]
+        record = self.memories.get(memory_id)
+        if record is None:
             return None
-
-        memory = self.memories[memory_id]
-
-        # Lazy-load payload if necessary
-        if memory.get("data") is None:
-            data_path = Path(memory.get("data_path", self._memory_blob_path(memory_id)))
-            if data_path.exists():
-                try:
-                    memory["data"] = torch.load(data_path, map_location="cpu")
-                except Exception as e:
-                    logger.warning(f"Failed to load memory payload for {memory_id} from {data_path}: {e}")
-                    memory["data"] = None
-
-        retention = self._calculate_retention(memory)
-
-        # BIOLOGICAL CONSTRAINT: recall failure
-        if retention < self.recall_failure_retention:
-            logger.info(f"Recall Failed for {memory_id} (R={retention:.2f})")
+        data_path = Path(record.data_path)
+        if not data_path.exists():
             return None
+        try:
+            payload = torch.load(data_path, map_location="cpu")
+        except Exception as exc:
+            logger.warning("Failed to load memory payload for %s from %s: %s", memory_id, data_path, exc)
+            return None
+        self._payload_cache[memory_id] = payload
+        return payload
 
-        # Reinforce on successful access
-        self._reinforce_memory(memory_id)
-        return memory.get("data")
+    def retrieve_memory(self, memory_id: str, reinforce: bool = True) -> Optional[Any]:
+        with self._lock:
+            record = self.memories.get(memory_id)
+            if record is None:
+                return None
 
-    def _reinforce_memory(self, memory_id: str) -> None:
-        """Strengthen memory stability upon access (Spaced Repetition principle)."""
+            retention = self._calculate_retention(record)
+            if retention < self.recall_failure_retention:
+                if reinforce:
+                    self.review_memory(memory_id, success=False)
+                return None
 
-        memory = self.memories[memory_id]
-        current_time = time.time()
-        elapsed = current_time - float(memory["last_access"])
+            payload = self._load_payload(memory_id)
+            if payload is None:
+                return None
 
-        # Stability increase depends on difficulty of retrieval (time passed)
-        stability_gain = 0.1 * elapsed
+            if reinforce:
+                self.review_memory(memory_id, success=True)
+            return payload
 
-        memory["stability"] = float(memory["stability"]) + float(stability_gain)
-        memory["last_access"] = current_time
-        memory["access_count"] = int(memory["access_count"]) + 1
-        self._schedule_review(memory_id)
+    def review_memory(self, memory_id: str, success: bool) -> None:
+        with self._lock:
+            record = self.memories.get(memory_id)
+            if record is None:
+                return
+
+            now = time.time()
+            retention = self._calculate_retention(record, now=now)
+            quality = int(np.clip(round(retention * 5.0), 0, 5)) if success else 0
+
+            if success:
+                record.repetitions += 1
+                record.forgotten = False
+                if record.repetitions == 1:
+                    interval = self.initial_interval_seconds
+                elif record.repetitions == 2:
+                    interval = self.initial_interval_seconds * 6.0
+                else:
+                    interval = record.interval_seconds * max(1.3, record.retrieval_difficulty)
+
+                ef_delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
+                record.retrieval_difficulty = float(max(1.3, min(3.0, record.retrieval_difficulty + ef_delta)))
+                record.interval_seconds = max(self.initial_interval_seconds, interval)
+                record.strength = float(min(1.0, record.strength + 0.06 + (quality / 100.0)))
+                record.stability = float(max(self.min_stability, record.stability * (1.0 + 0.12 * max(1, quality))))
+                record.last_reviewed = now
+                record.last_access = now
+                record.access_count += 1
+            else:
+                record.lapses += 1
+                record.repetitions = 0
+                record.forgotten = True
+                record.interval_seconds = max(1.0, self.initial_interval_seconds / 2.0)
+                record.retrieval_difficulty = float(max(1.3, record.retrieval_difficulty - 0.2))
+                record.strength = float(max(0.1, record.strength * 0.7))
+                record.stability = float(max(self.min_stability, record.stability / self.relearn_penalty_factor))
+                record.last_access = now
+
+            self._schedule_review(memory_id)
 
     def has_at_risk_memory(self, threshold: Optional[float] = None) -> bool:
-        """Fast check: is any memory currently below `threshold`?"""
-
-        threshold = self.review_threshold if threshold is None else float(threshold)
-
-        # If caller uses a different threshold than configured, fallback to early-exit scan.
-        if threshold != self.review_threshold:
-            for memory in self.memories.values():
-                if self._calculate_retention(memory) < threshold:
+        threshold_value = self.review_threshold if threshold is None else float(threshold)
+        with self._lock:
+            self._cleanup_heap()
+            now = time.time()
+            if self._review_heap:
+                due_at, _, _ = self._review_heap[0]
+                if due_at <= now:
+                    return True
+            for record in self.memories.values():
+                if self._calculate_retention(record, now=now) < threshold_value:
                     return True
             return False
 
-        self._cleanup_heap()
-        if not self._review_heap:
-            return False
-        due_at, _, _ = self._review_heap[0]
-        return due_at <= time.time()
-
     def get_at_risk_memories(self, threshold: Optional[float] = None, limit: int = 1000) -> List[str]:
-        """Identify memories that are fading.
+        threshold_value = self.review_threshold if threshold is None else float(threshold)
+        with self._lock:
+            self._cleanup_heap()
+            now = time.time()
+            due_ids: List[str] = []
 
-        - If `threshold` matches configured review_threshold, uses the review heap.
-        - Otherwise falls back to scanning.
-        """
+            popped: List[Tuple[float, int, str]] = []
+            while self._review_heap and len(due_ids) < limit:
+                due_at, seq, mem_id = heapq.heappop(self._review_heap)
+                popped.append((due_at, seq, mem_id))
+                if due_at > now:
+                    continue
+                if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
+                    due_ids.append(mem_id)
+            for entry in popped:
+                heapq.heappush(self._review_heap, entry)
 
-        threshold = self.review_threshold if threshold is None else float(threshold)
+            if len(due_ids) >= limit:
+                return due_ids
 
-        if threshold != self.review_threshold:
-            at_risk: List[str] = []
-            for mem_id, memory in self.memories.items():
-                if self._calculate_retention(memory) < threshold:
-                    at_risk.append(mem_id)
-                    if len(at_risk) >= limit:
+            for memory_id, record in self.memories.items():
+                if memory_id in due_ids:
+                    continue
+                if self._calculate_retention(record, now=now) < threshold_value:
+                    due_ids.append(memory_id)
+                    if len(due_ids) >= limit:
                         break
-            return at_risk
-
-        self._cleanup_heap()
-        now = time.time()
-
-        popped: List[Tuple[float, int, str]] = []
-        due_ids: List[str] = []
-
-        while self._review_heap and len(due_ids) < limit:
-            due_at, seq, mem_id = self._review_heap[0]
-            if due_at > now:
-                break
-            heapq.heappop(self._review_heap)
-            popped.append((due_at, seq, mem_id))
-            if mem_id in self.memories and self._scheduled_due.get(mem_id) == due_at:
-                due_ids.append(mem_id)
-
-        for entry in popped:
-            heapq.heappush(self._review_heap, entry)
-
-        return due_ids
+            return due_ids
 
     def get_due_review_count(self, limit: int = 1000) -> int:
         return len(self.get_at_risk_memories(limit=limit))
 
-    def save_state(self) -> None:
-        """Persist memory index (JSON) and per-memory payload blobs."""
+    def memory_stats(self) -> Dict[str, float]:
+        with self._lock:
+            if not self.memories:
+                return {
+                    "count": 0.0,
+                    "stable": 0.0,
+                    "unstable": 0.0,
+                    "forgotten": 0.0,
+                    "avg_retention": 0.0,
+                }
 
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        self.store_dir.mkdir(parents=True, exist_ok=True)
-
-        index_dump: Dict[str, Dict[str, Any]] = {}
-        for mem_id, mem in self.memories.items():
-            data_path = Path(mem.get("data_path", self._memory_blob_path(mem_id)))
-
-            payload = mem.get("data")
-            if payload is not None:
-                try:
-                    torch.save(self._cpuify(payload), data_path)
-                except Exception as e:
-                    logger.warning(f"Failed to persist memory payload for {mem_id} to {data_path}: {e}")
-
-            index_dump[mem_id] = {
-                "created_at": float(mem.get("created_at", time.time())),
-                "last_access": float(mem.get("last_access", time.time())),
-                "stability": float(mem.get("stability", 1.0)),
-                "access_count": int(mem.get("access_count", 0)),
-                "data_path": str(data_path),
+            now = time.time()
+            retentions = [self._calculate_retention(r, now=now) for r in self.memories.values()]
+            stable = sum(1 for r in retentions if r >= self.stability_threshold)
+            forgotten = sum(1 for r in self.memories.values() if r.forgotten)
+            return {
+                "count": float(len(self.memories)),
+                "stable": float(stable),
+                "unstable": float(len(self.memories) - stable),
+                "forgotten": float(forgotten),
+                "avg_retention": float(np.mean(retentions)),
             }
 
-        with open(self.index_path, "w") as f:
-            json.dump(index_dump, f, indent=2)
+    def get_average_stability(self) -> float:
+        with self._lock:
+            if not self.memories:
+                return 1.0
+            return float(np.mean([record.stability for record in self.memories.values()]))
 
-        logger.info(f"Memory State saved to {self.index_path} (blobs in {self.store_dir})")
+    def consolidate_due_memories(self, limit: int = 250, boost: float = 0.25) -> int:
+        with self._lock:
+            due_ids = self.get_at_risk_memories(limit=limit)
+            count = 0
+            for memory_id in due_ids:
+                record = self.memories.get(memory_id)
+                if record is None:
+                    continue
+                record.stability = float(max(self.min_stability, record.stability * (1.0 + float(boost))))
+                record.strength = float(min(1.0, record.strength + 0.02))
+                record.forgotten = False
+                self._schedule_review(memory_id)
+                count += 1
+            return count
+
+    def list_memories(
+        self,
+        offset: int = 0,
+        limit: int = 50,
+        stable: Optional[bool] = None,
+        last_reviewed_before: Optional[float] = None,
+        last_reviewed_after: Optional[float] = None,
+        min_strength: Optional[float] = None,
+        max_strength: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        with self._lock:
+            now = time.time()
+            rows: List[Dict[str, Any]] = []
+            for record in self.memories.values():
+                retention = self._calculate_retention(record, now=now)
+                is_stable = retention >= self.stability_threshold
+                if stable is not None and stable != is_stable:
+                    continue
+                if last_reviewed_before is not None and record.last_reviewed >= float(last_reviewed_before):
+                    continue
+                if last_reviewed_after is not None and record.last_reviewed <= float(last_reviewed_after):
+                    continue
+                if min_strength is not None and record.strength < float(min_strength):
+                    continue
+                if max_strength is not None and record.strength > float(max_strength):
+                    continue
+                rows.append(
+                    {
+                        "key": record.key,
+                        "last_reviewed": record.last_reviewed,
+                        "strength": record.strength,
+                        "stability": record.stability,
+                        "decay_rate": record.decay_rate,
+                        "retrieval_difficulty": record.retrieval_difficulty,
+                        "repetitions": record.repetitions,
+                        "lapses": record.lapses,
+                        "forgotten": record.forgotten,
+                        "retention": retention,
+                        "next_review_at": record.next_review_at,
+                    }
+                )
+
+            rows.sort(key=lambda item: item["next_review_at"])
+            start = max(0, int(offset))
+            end = start + max(1, int(limit))
+            return rows[start:end]
+
+    def reset(self) -> None:
+        with self._lock:
+            self.memories.clear()
+            self._payload_cache.clear()
+            self._review_heap.clear()
+            self._scheduled_due.clear()
+            self._heap_seq = 0
+
+    def save_state(self) -> None:
+        with self._lock:
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            self.store_dir.mkdir(parents=True, exist_ok=True)
+
+            index_dump: Dict[str, Dict[str, Any]] = {}
+            for memory_id, record in self.memories.items():
+                data_path = Path(record.data_path)
+                payload = self._payload_cache.get(memory_id)
+                if payload is not None:
+                    try:
+                        torch.save(self._cpuify(payload), data_path)
+                    except Exception as exc:
+                        logger.warning("Failed to save memory payload for %s: %s", memory_id, exc)
+                index_dump[memory_id] = self._serialize_record(record)
+
+            with open(self.index_path, "w", encoding="utf-8") as handle:
+                json.dump(index_dump, handle, indent=2)
 
     def load_state(self) -> None:
-        """Load memory metadata.
+        with self._lock:
+            self.reset()
 
-        Preferred: `index_path`. Legacy: `legacy_metadata_path` (metadata-only).
-        """
+            if self.index_path.exists():
+                with open(self.index_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
 
-        self.memories = {}
-        self._review_heap.clear()
-        self._scheduled_due.clear()
-        self._heap_seq = 0
+                for memory_id, rec_payload in payload.items():
+                    record = self._deserialize_record(memory_id, rec_payload)
+                    self.memories[memory_id] = record
+                    self._schedule_review(memory_id)
+                    if self.eager_load:
+                        self._load_payload(memory_id)
+                logger.info("Memory state loaded from %s with %d items", self.index_path, len(self.memories))
+                return
 
-        if self.index_path.exists():
-            with open(self.index_path, "r") as f:
-                index = json.load(f)
-
-            for mem_id, meta in index.items():
-                rec: Dict[str, Any] = {
-                    "created_at": float(meta.get("created_at", time.time())),
-                    "last_access": float(meta.get("last_access", time.time())),
-                    "stability": float(meta.get("stability", 1.0)),
-                    "access_count": int(meta.get("access_count", 0)),
-                    "data_path": str(meta.get("data_path", self._memory_blob_path(mem_id))),
-                    "data": None,
-                }
-
-                if self.eager_load:
-                    data_path = Path(rec["data_path"])
-                    rec["data"] = torch.load(data_path, map_location="cpu") if data_path.exists() else None
-
-                self.memories[mem_id] = rec
-                self._schedule_review(mem_id)
-
-            logger.info(f"Memory State loaded: {len(self.memories)} items from {self.index_path}.")
-            return
-
-        # Legacy metadata-only format
-        if self.legacy_metadata_path.exists():
-            with open(self.legacy_metadata_path, "r") as f:
-                legacy = json.load(f)
-
-            for mem_id, meta in legacy.items():
-                self.memories[mem_id] = {
-                    "created_at": float(meta.get("created_at", time.time())),
-                    "last_access": float(meta.get("last_access", time.time())),
-                    "stability": float(meta.get("stability", 1.0)),
-                    "access_count": int(meta.get("access_count", 0)),
-                    "data_path": str(self._memory_blob_path(mem_id)),
-                    "data": None,
-                }
-                self._schedule_review(mem_id)
-
-            logger.info(
-                f"Legacy memory metadata loaded: {len(self.memories)} items from {self.legacy_metadata_path}. "
-                f"(payloads missing; next save will write {self.index_path})"
-            )
+            if self.legacy_metadata_path.exists():
+                with open(self.legacy_metadata_path, "r", encoding="utf-8") as handle:
+                    legacy = json.load(handle)
+                for memory_id, rec_payload in legacy.items():
+                    record = self._deserialize_record(memory_id, rec_payload)
+                    self.memories[memory_id] = record
+                    self._schedule_review(memory_id)
+                logger.info("Legacy memory metadata loaded: %d items", len(self.memories))

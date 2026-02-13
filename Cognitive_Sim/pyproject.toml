@@ -15,7 +15,8 @@ cognitive-sim = "src.main:cli"
 cognitive-sim-api = "src.api:main"
 
 [tool.setuptools]
-package-dir = {"" = "Cognitive_Sim"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["Cognitive_Sim"]
+where = ["."]
+include = ["src*"]

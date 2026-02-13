@@ -4,6 +4,10 @@ memory:
   stability_threshold: 0.3
   review_threshold: 0.4
   recall_failure_retention: 0.15
+  min_stability: 0.1
+  default_difficulty: 2.5
+  initial_interval_seconds: 30.0
+  relearn_penalty_factor: 1.5
   store_dir: "data/memory_store"
   index_path: "data/memory_index.json"
   eager_load: false
@@ -14,10 +18,15 @@ network:
   output_size: 5
   learning_rate: 0.01
   entropy_threshold: 0.6
+  loss_type: "mse"
+  gradient_clip_norm: 1.0
+  weight_decay: 0.0001
+  device: "auto"
   uncertainty_update_interval: 10
 
 agent:
   initial_energy: 100.0
+  max_energy: 200.0
   energy_cost_learn: 5.0
   energy_cost_review: 2.0
   energy_reward_correct: 10.0
@@ -26,6 +35,34 @@ agent:
   sleep_when_energy_below: 10.0
   consolidation_boost: 0.25
   compute_cost_relearn: 15.0
+  policy_type: "heuristic"
+  entropy_review_threshold: 0.7
+  review_due_limit: 25
+  bandit_epsilon: 0.1
+  bandit_learning_rate: 0.05
+
+data:
+  environment: "deterministic"
+  size: 256
+  input_dim: 10
+  output_dim: 5
+  noise_std: 0.1
+  batch_size: 16
+
+runtime:
+  checkpoint_path: "data/network_checkpoint.pt"
+  artifact_dir: "logs/runs"
+  dev_reset_enabled: true
+  tenant_db_path: "data/tenant_memory.db"
+  analytics_window_days: 30
+  pilot_min_retained_mastery_lift: 0.05
+  pilot_min_forgetting_velocity_reduction: 0.10
+  pilot_min_review_efficiency_lift: 0.05
+  pilot_confidence_z_threshold: 1.96
+  pilot_min_sample_size: 100
+  pilot_max_onboarding_hours: 40.0
+
+seed: 42
 
 entropy_threshold: 0.7
 log_level: "INFO"

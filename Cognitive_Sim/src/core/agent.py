@@ -1,195 +1,172 @@
-from typing import Dict, Any, Tuple, List, Optional
-import torch
+from typing import Any, Dict, Optional
+
 import numpy as np
+import torch
+
+from src.config import AgentConfig
+from src.core.interfaces import Policy, PolicyContext
 from src.core.memory_layer import MemoryLayer
 from src.core.network import CognitiveNetwork
 from src.core.optimizer import CognitiveOptimizer
-from src.config import AgentConfig
-from src.utils.logger import logger
+from src.core.policy import build_policy
+
 
 class CognitiveAgent:
-    """
-    The Agentic Model that interacts with the environment.
-    Manages energy, compute cycles, and makes decisions on learning vs reviewing.
-    """
-    def __init__(self, 
-                 memory: MemoryLayer, 
-                 network: CognitiveNetwork, 
-                 optimizer: CognitiveOptimizer,
-                 config: Optional[AgentConfig] = None):
+    """Agent orchestration: policy -> memory/network actions -> reward update."""
+
+    def __init__(
+        self,
+        memory: MemoryLayer,
+        network: CognitiveNetwork,
+        optimizer: CognitiveOptimizer,
+        config: Optional[AgentConfig] = None,
+        policy: Optional[Policy] = None,
+    ):
         self.memory = memory
         self.network = network
         self.optimizer = optimizer
-
         self.config = config or AgentConfig()
-        
-        # Agent State
+        self.policy = policy or build_policy(self.config)
+
         self.energy = float(self.config.initial_energy)
+        self.max_energy = float(self.config.max_energy)
         self.compute_cycles_spent = 0.0
         self.total_rewards = 0.0
 
-        # Success/failure counters for metrics
         self.review_successes = 0
         self.review_failures = 0
         self.learn_successes = 0
         self.learn_failures = 0
-        
-        # Cached config fields
-        self.review_threshold = float(self.memory.review_threshold)
-        self.energy_cost_learn = float(self.config.energy_cost_learn)
-        self.energy_cost_review = float(self.config.energy_cost_review)
-        self.energy_reward_correct = float(self.config.energy_reward_correct)
-        self.compute_cost_relearn = float(self.config.compute_cost_relearn)
-        self.energy_cost_sleep = float(self.config.energy_cost_sleep)
-        self.energy_gain_sleep = float(self.config.energy_gain_sleep)
-        self.sleep_when_energy_below = float(self.config.sleep_when_energy_below)
-        self.consolidation_boost = float(self.config.consolidation_boost)
+        self.sleep_count = 0
+
+        self.last_action: Optional[str] = None
+        self.last_reward: float = 0.0
+
+    def _build_policy_context(self) -> PolicyContext:
+        return PolicyContext(
+            energy=float(self.energy),
+            max_energy=float(self.max_energy),
+            due_count=int(self.memory.get_due_review_count(limit=self.config.review_due_limit)),
+            entropy=float(self.network.calculate_uncertainty()),
+            memory_count=len(self.memory.memories),
+        )
 
     def decide_strategy(self) -> str:
-        """
-        Decide whether to 'learn_new' or 'review'.
-        Strategy: If there are memories at risk of decaying, prioritize review.
-        """
-        # If energy is critically low, sleep/consolidate
-        if self.energy <= self.sleep_when_energy_below:
-            logger.info("Agent decided to SLEEP (low energy)")
-            return "sleep"
+        context = self._build_policy_context()
+        action = self.policy.select_action(context)
+        self.last_action = action
+        return action
 
-        # Fast due-check using memory scheduler
-        if self.memory.has_at_risk_memory(threshold=self.review_threshold):
-            logger.info("Agent decided to REVIEW (items due)")
-            return "review"
-        
-        if self.energy < self.energy_cost_learn:
-             logger.info("Agent too tired to learn new, forced to rest/review (or potentially fail)")
-             # In a real survival sim, this might be death or forced rest. 
-             # For now, we'll review if possible or do nothing.
-             return "sleep"
+    def _clamp_energy(self) -> None:
+        self.energy = float(max(0.0, min(self.max_energy, self.energy)))
 
-        logger.info("Agent decided to LEARN NEW")
-        return "learn_new"
+    def _apply_reward(self, context: PolicyContext, action: str, reward: float) -> None:
+        self.last_reward = float(reward)
+        self.total_rewards += float(reward)
+        self.policy.update(context, action, reward)
 
-    def learn_new(self, input_data: torch.Tensor, target: torch.Tensor) -> Dict[str, Any]:
-        """
-        Process new information (Flashcard).
-        Cost: Energy.
-        Reward: Potential future retrieval.
-        """
-        if self.energy < self.energy_cost_learn:
+    def learn_new(self, input_data: torch.Tensor, target: torch.Tensor, memory_id: Optional[str] = None) -> Dict[str, Any]:
+        context = self._build_policy_context()
+        if self.energy < float(self.config.energy_cost_learn):
             self.learn_failures += 1
+            self._apply_reward(context, "learn_new", -1.0)
             return {"status": "failed", "reason": "low_energy"}
 
-        self.energy -= self.energy_cost_learn
-        
-        # 1. Forward Pass & Train
-        self.optimizer.zero_grad()
-        output, meta_state = self.network(input_data)
-        loss = torch.nn.functional.mse_loss(output, target)
-        loss.backward()
-        
-        # Use entropy/stability for optimization step (simplified here)
-        self.optimizer.step(system_entropy=meta_state['uncertainty'], memory_stability=1.0)  # Assume stable for new
+        self.energy -= float(self.config.energy_cost_learn)
+        train_result = self.network.train_step(input_data, target, self.optimizer.optimizer)
 
-        # 2. Store in Memory
-        # Generate a unique ID for this 'flashcard' (concept)
-        memory_id = f"mem_{int(loss.item() * 10000)}_{np.random.randint(0, 1000)}"
-        self.memory.add_memory(memory_id, {
-            "input": input_data,
-            "target": target,
-            "learned_loss": loss.item()
-        })
+        if memory_id is None:
+            loss_value = int(train_result["loss"] * 10000)
+            memory_id = "mem_" + str(loss_value) + "_" + str(np.random.randint(0, 100000))
+
+        embedding = input_data.detach().flatten().cpu().tolist()
+        self.memory.add_memory(
+            memory_id,
+            data={"input": input_data.detach().cpu(), "target": target.detach().cpu(), "loss": train_result["loss"]},
+            initial_stability=1.0,
+            embedding=embedding,
+        )
 
         self.learn_successes += 1
-        
+        self._clamp_energy()
+
+        reward = -float(self.config.energy_cost_learn) + max(0.0, 1.0 - float(train_result["loss"]))
+        self._apply_reward(context, "learn_new", reward)
         return {
-            "status": "learned", 
-            "loss": loss.item(),
+            "status": "learned",
+            "loss": train_result["loss"],
+            "mae": train_result["mae"],
+            "uncertainty": train_result["uncertainty"],
             "energy_remaining": self.energy,
-            "memory_id": memory_id
-        }
-
-    def sleep(self) -> Dict[str, Any]:
-        """Consolidate memories and recover energy.
-
-        Simple model:
-        - Pay a small energy cost
-        - Recover a chunk of energy
-        - Boost stability of currently due memories
-        """
-        self.energy = max(0.0, self.energy - self.energy_cost_sleep)
-        self.energy += self.energy_gain_sleep
-
-        boosted = 0
-        due_ids = self.memory.get_at_risk_memories(limit=250)
-        for mem_id in due_ids:
-            mem = self.memory.memories.get(mem_id)
-            if not mem:
-                continue
-            mem['stability'] = float(mem.get('stability', 1.0)) * (1.0 + self.consolidation_boost)
-            self.memory._schedule_review(mem_id)
-            boosted += 1
-
-        return {
-            "status": "slept",
-            "energy": self.energy,
-            "boosted_memories": boosted
+            "memory_id": memory_id,
         }
 
     def review(self) -> Dict[str, Any]:
-        """
-        Review an existing memory.
-        If retrieval successful: Gain Energy (Reward).
-        If retrieval failed (forgotten): Pay Compute Cost (Re-learn).
-        """
-        # 1. Select memory to review
-        at_risk = self.memory.get_at_risk_memories(threshold=self.review_threshold)
-        if not at_risk:
-            # If nothing strictly at risk, pick a random one or oldest
-            # For now, simplistic fallback
+        context = self._build_policy_context()
+        due_ids = self.memory.get_at_risk_memories(limit=self.config.review_due_limit)
+        if not due_ids:
+            self._apply_reward(context, "review", -0.1)
             return {"status": "skipped", "reason": "nothing_to_review"}
-            
-        memory_id = at_risk[0] # Pick most critical
-        
-        # 2. Attempt Retrieval
-        memory_item = self.memory.retrieve_memory(memory_id)
-        
-        if memory_item:
-            # SUCCESS: Memory retrieved (not decayed too much)
-            # Reward: Gain energy
-            self.energy += self.energy_reward_correct
-            self.total_rewards += self.energy_reward_correct
-            self.energy -= self.energy_cost_review # Cost of the action itself
 
-            self.review_successes += 1
-            
-            # Reinforce (Training on reviewed item)
-            input_data = memory_item['input']
-            target = memory_item['target']
-            
-            self.optimizer.zero_grad()
-            output, _ = self.network(input_data)
-            loss = torch.nn.functional.mse_loss(output, target)
-            loss.backward()
-            self.optimizer.step(system_entropy=0.5, memory_stability=1.0)  # Simplified update
-            
-            return {
-                "status": "reviewed_success",
-                "energy_gained": self.energy_reward_correct,
-                "current_energy": self.energy
-            }
-        
-        else:
-            # FAILURE: Memory forgotten
-            # Cost: Compute cycles to re-learn (simulated penalty)
-            self.compute_cycles_spent += self.compute_cost_relearn
+        memory_id = due_ids[0]
+        payload = self.memory.retrieve_memory(memory_id, reinforce=False)
+        self.energy -= float(self.config.energy_cost_review)
+
+        if payload is None:
+            self.memory.review_memory(memory_id, success=False)
             self.review_failures += 1
-            
-            # In a real system, we'd need to fetch the data again from the 'Environment' (Book)
-            # Since we can't retrieve it from memory, we treat it as 'lost' until re-encountered.
-            # But for the simulation, we might assume the agent 'looks it up'
-            
+            self.compute_cycles_spent += float(self.config.compute_cost_relearn)
+            self._clamp_energy()
+            reward = -float(self.config.energy_cost_review) - 1.0
+            self._apply_reward(context, "review", reward)
             return {
                 "status": "reviewed_failed",
-                "penalty": "compute_cost_incurred",
-                "compute_spent": self.compute_cycles_spent
+                "memory_id": memory_id,
+                "compute_spent": self.compute_cycles_spent,
             }
+
+        input_data = payload["input"]
+        target = payload["target"]
+        train_result = self.network.train_step(input_data, target, self.optimizer.optimizer)
+        self.memory.review_memory(memory_id, success=True)
+
+        self.review_successes += 1
+        self.energy += float(self.config.energy_reward_correct)
+        self._clamp_energy()
+
+        reward = float(self.config.energy_reward_correct - self.config.energy_cost_review) + max(0.0, 1.0 - train_result["loss"])
+        self._apply_reward(context, "review", reward)
+        return {
+            "status": "reviewed_success",
+            "memory_id": memory_id,
+            "loss": train_result["loss"],
+            "uncertainty": train_result["uncertainty"],
+            "current_energy": self.energy,
+        }
+
+    def sleep(self) -> Dict[str, Any]:
+        context = self._build_policy_context()
+        self.energy = max(0.0, self.energy - float(self.config.energy_cost_sleep))
+        self.energy += float(self.config.energy_gain_sleep)
+        boosted = self.memory.consolidate_due_memories(limit=250, boost=float(self.config.consolidation_boost))
+        self.sleep_count += 1
+        self._clamp_energy()
+
+        reward = -float(self.config.energy_cost_sleep) + (0.1 * boosted)
+        self._apply_reward(context, "sleep", reward)
+        return {
+            "status": "slept",
+            "energy": self.energy,
+            "boosted_memories": boosted,
+        }
+
+    def act(self, action: str, input_data: Optional[torch.Tensor] = None, target: Optional[torch.Tensor] = None) -> Dict[str, Any]:
+        if action == "learn_new":
+            if input_data is None or target is None:
+                raise ValueError("learn_new action requires input_data and target")
+            return self.learn_new(input_data=input_data, target=target)
+        if action == "review":
+            return self.review()
+        if action == "sleep":
+            return self.sleep()
+        raise ValueError("Unsupported action: " + action)
