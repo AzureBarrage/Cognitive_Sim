@@ -1,5 +1,5 @@
 ```
-Retentia/
+Cognitive_Sim/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                 # Entry point with CLI interface

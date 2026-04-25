@@ -1,0 +1,13 @@
+# Python test/cache artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime state and generated artifacts
+data/
+logs/
+*.pt
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl

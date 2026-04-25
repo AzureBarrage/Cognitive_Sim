@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cognitive-sim"
+version = "0.1.0"
+description = "Biologically-inspired cognitive architecture simulation"
+requires-python = ">=3.8"
+
+# Note: runtime dependencies remain in requirements/*.txt for now.
+
+[project.scripts]
+cognitive-sim = "src.main:cli"
+cognitive-sim-api = "src.api:main"
+cognitive-sim-suite = "src.simulation_suite:main"
+cognitive-sim-ui = "src.frontend_app:main"
+cognitive-sim-daily-recall-ui = "src.daily_recall_coach_app:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

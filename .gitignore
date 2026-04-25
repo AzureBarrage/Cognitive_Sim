@@ -1,0 +1,17 @@
+# Python test/cache artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Project runtime state and generated artifacts
+data/
+logs/
+Cognitive_Sim/data/
+Cognitive_Sim/logs/
+Retentia/data/
+Retentia/logs/
+*.pt
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl

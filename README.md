@@ -1,30 +1,33 @@
-# Retentia (Retentia)
+# Cognitive Sim
 
-Retentia is a biologically-inspired agent simulation with:
+Cognitive Sim is a biologically-inspired agent simulation and recall-training platform with:
 
 - Ebbinghaus-style memory decay
 - spaced repetition review scheduling
 - energy economy (learn/review/sleep tradeoffs)
 - PyTorch neural core
 - FastAPI + CLI interfaces
+- Streamlit learner/admin frontends
+- multi-tenant learning workflows for organizations, users, concepts, attempts, review queues, analytics, audit logs, ROI reports, and pilot gates
 - run artifacts (JSONL event log + summary report)
 
 ---
 
 ## Repository Layout
 
-- Core runtime: `Retentia/src/`
-- Configs: `Retentia/configs/`
-- Tests: `Retentia/tests/`
-- Dependency sets: `Retentia/requirements/`
-- Changelog: `Retentia/CHANGELOG.md`
+- Core runtime: `Cognitive_Sim/src/`
+- Configs: `Cognitive_Sim/configs/`
+- Tests: `Cognitive_Sim/tests/`
+- Dependency sets: `Cognitive_Sim/requirements/`
+- Changelog: `Cognitive_Sim/CHANGELOG.md`
+- Runtime data/artifacts: `Cognitive_Sim/data/` and `Cognitive_Sim/logs/`
 
 ---
 
 ## Local Quickstart
 
 ```bash
-cd Retentia
+cd Cognitive_Sim
 python -m pip install -r requirements/dev.txt
 python -m pytest -q
 ```
@@ -58,7 +61,7 @@ streamlit run src/daily_recall_coach_app.py
 ## Docker Quickstart
 
 ```bash
-cd Retentia
+cd Cognitive_Sim
 docker-compose up --build
 ```
 
@@ -103,7 +106,7 @@ streamlit run src/frontend_app.py
 Launch Daily Recall Coach via package script:
 
 ```bash
-retentia-daily-recall-ui
+cognitive-sim-daily-recall-ui
 ```
 
 Dashboard includes:
@@ -138,12 +141,15 @@ Dashboard includes:
 - `GET /audit-log` — tenant/user action audit trail
 - `POST /roi/report` — executive ROI report for B2B business cases
 - `GET /exports/review-queue.csv`, `GET /exports/analytics.csv`, `GET /exports/audit-log.csv`, `POST /exports/roi-report.csv` — CSV exports
+- `POST /pilot/setup` — create a randomized control/treatment pilot cohort from tenant users
+- `GET /pilot/run` — retrieve pilot cohort assignment and latest baseline snapshot
+- `POST /pilot/baseline` — capture pilot baseline metrics for control/treatment cohorts
 - `POST /pilot/evaluate` — objective go/no-go evaluation with confidence checks
 - `GET /pilot/history` — historical pilot gate decisions
 
 Authentication:
 
-- When `runtime.require_api_key` is true (see [`production.yaml`](Retentia/configs/production.yaml:1)), send the key via `x-api-key: <value>` or `Authorization: Bearer <value>`.
+- When `runtime.require_api_key` is true (see [`production.yaml`](Cognitive_Sim/configs/production.yaml:1)), send the key via `x-api-key: <value>` or `Authorization: Bearer <value>`.
 
 Examples:
 
@@ -238,6 +244,22 @@ curl "http://localhost:8000/exports/review-queue.csv?user_id=usr_001&limit=20"
 ```
 
 ```bash
+curl -X POST http://localhost:8000/pilot/setup \
+  -H "Content-Type: application/json" \
+  -d '{"org_id":"org_acme","name":"Q2 onboarding pilot","treatment_ratio":0.5,"random_seed":42}'
+```
+
+```bash
+curl "http://localhost:8000/pilot/run?pilot_id=pilot_001"
+```
+
+```bash
+curl -X POST http://localhost:8000/pilot/baseline \
+  -H "Content-Type: application/json" \
+  -d '{"pilot_id":"pilot_001","window_days":30}'
+```
+
+```bash
 curl -X POST http://localhost:8000/pilot/evaluate \
   -H "Content-Type: application/json" \
   -d '{"org_id":"org_acme","sample_size":300,"onboarding_hours":25.0,"retained_mastery_treatment":0.80,"retained_mastery_control":0.70,"forgetting_velocity_treatment":0.20,"forgetting_velocity_control":0.35,"review_efficiency_treatment":0.74,"review_efficiency_control":0.62}'
@@ -253,9 +275,9 @@ curl "http://localhost:8000/pilot/history?org_id=org_acme&limit=20"
 
 Primary environment files:
 
-- `Retentia/configs/development.yaml`
-- `Retentia/configs/testing.yaml`
-- `Retentia/configs/production.yaml`
+- `Cognitive_Sim/configs/development.yaml`
+- `Cognitive_Sim/configs/testing.yaml`
+- `Cognitive_Sim/configs/production.yaml`
 
 Important sections:
 
@@ -271,7 +293,6 @@ Important sections:
 Multi-tenant runtime options:
 
 - `runtime.tenant_db_path`: SQLite file for tenant/user memory state and attempts
-- `runtime.analytics_window_days`: default analytics horizon for `/analytics`
 - `runtime.analytics_window_days`: default analytics horizon for `/analytics` and `/daily-session`
 - `runtime.pilot_min_retained_mastery_lift`: minimum lift threshold for pilot pass
 - `runtime.pilot_min_forgetting_velocity_reduction`: minimum forgetting reduction threshold
@@ -298,13 +319,29 @@ This keeps the primary UX as a single round-trip per learner action while preser
 
 ---
 
+## Functionality Checklist
+
+The reclaimed project currently documents and supports:
+
+- Core cognitive simulation: memory decay, stability tracking, spaced review scheduling, energy/reward tradeoffs, sleep consolidation, deterministic seeding, and checkpoint persistence.
+- Neural/runtime layer: PyTorch network inference/training, optimizer scheduling, metrics buffering, JSONL run logs, and summary reports.
+- CLI workflows: simulation runs, verification checks, simulation-suite scenarios, policy A/B runs, reproducibility checks, and persistence/restart checks.
+- API workflows: health/status, teach, ask, sleep, memory browsing, metrics, guarded reset, and optional API-key authentication.
+- Tenant workflows: organizations, users, concepts, attempts, daily learner sessions, review queues, analytics, audit logs, and tenant SQLite persistence.
+- Business workflows: ROI report generation and CSV exports for review queues, analytics, audit logs, and ROI reports.
+- Pilot workflows: pilot setup, randomized control/treatment assignment, baseline capture, objective go/no-go evaluation, and pilot history.
+- Frontends: full Streamlit dashboard, Daily Recall Coach, demo-data seeding, review UX, analytics, memory explorer, pilot evaluation, and pilot history views.
+- Operations: environment-specific YAML configuration, dependency sets, Docker/Docker Compose startup, and automated unit/integration tests.
+
+---
+
 ## Artifacts and Persistence
 
 Typical outputs after a run:
 
-- Model checkpoint: `Retentia/data/network_checkpoint.pt`
-- Memory index + payload blobs: under `Retentia/data/`
-- Run metrics JSONL + summary: under `Retentia/logs/runs/`
+- Model checkpoint: `Cognitive_Sim/data/network_checkpoint.pt`
+- Memory index + payload blobs: under `Cognitive_Sim/data/`
+- Run metrics JSONL + summary: under `Cognitive_Sim/logs/runs/`
 
 ---
 
@@ -313,7 +350,7 @@ Typical outputs after a run:
 Run all tests:
 
 ```bash
-cd Retentia
+cd Cognitive_Sim
 python -m pytest -q
 ```
 
@@ -330,4 +367,4 @@ Current test suite covers:
 
 ## Change History
 
-See `Retentia/CHANGELOG.md` for full details of the latest audit and implementation pass.
+See `Cognitive_Sim/CHANGELOG.md` for full details of the latest audit and implementation pass.
