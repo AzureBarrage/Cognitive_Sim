@@ -77,6 +77,7 @@ def test_multitenant_endpoints_contract() -> None:
                 "concept_id": "concept_1",
                 "correct": True,
                 "response_ms": 800,
+                "attempted_at": 1700000000.0,
             },
         )
         assert attempt.status_code == 200
@@ -125,3 +126,72 @@ def test_pilot_gate_endpoints_contract() -> None:
         h = history.json()
         assert h["count"] >= 1
         assert isinstance(h["items"], list)
+
+
+def test_pilot_setup_and_baseline_contract() -> None:
+    with TestClient(app) as client:
+        org_id = "org_setup_" + uuid.uuid4().hex[:8]
+        create_org = client.post("/organizations", json={"name": "Setup Org", "org_id": org_id})
+        assert create_org.status_code == 200
+
+        created_users = []
+        for idx in range(4):
+            user_id = "usr_setup_" + uuid.uuid4().hex[:8]
+            user = client.post(
+                "/users",
+                json={
+                    "org_id": org_id,
+                    "email": f"setup{idx}@example.com",
+                    "user_id": user_id,
+                },
+            )
+            assert user.status_code == 200
+            created_users.append(user_id)
+
+            attempt = client.post(
+                "/record-attempt",
+                json={
+                    "user_id": user_id,
+                    "concept_id": f"concept_{idx}",
+                    "correct": idx % 2 == 0,
+                },
+            )
+            assert attempt.status_code == 200
+
+        setup = client.post(
+            "/pilot/setup",
+            json={
+                "org_id": org_id,
+                "name": "Support Pilot",
+                "treatment_ratio": 0.5,
+                "random_seed": 17,
+            },
+        )
+        assert setup.status_code == 200
+        setup_payload = setup.json()
+        assert setup_payload["control_count"] == 2
+        assert setup_payload["treatment_count"] == 2
+        pilot_id = setup_payload["pilot_id"]
+
+        run = client.get(f"/pilot/run?pilot_id={pilot_id}")
+        assert run.status_code == 200
+        run_payload = run.json()
+        assert run_payload["pilot_id"] == pilot_id
+        assert run_payload["latest_baseline"] is None
+
+        baseline = client.post(
+            "/pilot/baseline",
+            json={
+                "pilot_id": pilot_id,
+                "window_days": 30,
+            },
+        )
+        assert baseline.status_code == 200
+        baseline_payload = baseline.json()
+        assert baseline_payload["pilot_id"] == pilot_id
+        assert baseline_payload["control_metrics"]["users"] == 2
+        assert baseline_payload["treatment_metrics"]["users"] == 2
+
+        run_after = client.get(f"/pilot/run?pilot_id={pilot_id}")
+        assert run_after.status_code == 200
+        assert run_after.json()["latest_baseline"] is not None

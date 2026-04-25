@@ -15,6 +15,18 @@ def test_heuristic_policy_prefers_review_when_due_items_exist() -> None:
     assert policy.select_action(context) == "review"
 
 
+def test_heuristic_policy_forces_learning_when_memory_empty() -> None:
+    policy = HeuristicPolicy(entropy_review_threshold=0.7, sleep_when_energy_below=10.0, review_due_minimum=2)
+    context = PolicyContext(energy=80.0, max_energy=100.0, due_count=0, entropy=0.99, memory_count=0)
+    assert policy.select_action(context) == "learn_new"
+
+
+def test_heuristic_policy_avoids_review_when_no_due_items() -> None:
+    policy = HeuristicPolicy(entropy_review_threshold=0.7, sleep_when_energy_below=10.0, review_due_minimum=2)
+    context = PolicyContext(energy=80.0, max_energy=100.0, due_count=0, entropy=0.99, memory_count=5)
+    assert policy.select_action(context) == "learn_new"
+
+
 def test_bandit_policy_update_changes_q_values() -> None:
     policy = ContextualBanditPolicy(epsilon=0.0, alpha=0.5)
     context = PolicyContext(energy=90.0, max_energy=100.0, due_count=1, entropy=0.2, memory_count=10)

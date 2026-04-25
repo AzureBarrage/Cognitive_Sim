@@ -16,6 +16,15 @@ class HeuristicPolicy(Policy):
         energy_ratio = context.energy / max(context.max_energy, 1e-6)
         if context.energy <= self.sleep_when_energy_below:
             return "sleep"
+
+        # Guardrails: avoid degenerate review-only behavior.
+        if context.memory_count <= 0:
+            return "learn_new"
+        if context.due_count <= 0:
+            if energy_ratio < 0.1:
+                return "sleep"
+            return "learn_new"
+
         if context.due_count >= self.review_due_minimum:
             return "review"
         if context.entropy >= self.entropy_review_threshold and energy_ratio > 0.2:

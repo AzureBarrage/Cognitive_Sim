@@ -74,6 +74,36 @@ Verify runtime assumptions:
 python -m src.main verify --env testing --seed 123
 ```
 
+Run simulation suite scenarios:
+
+```bash
+python -m src.simulation_suite all --env development --steps 60 --seed 42
+```
+
+```bash
+python -m src.simulation_suite all --env testing --steps 60 --seed 42 --sim-step-seconds 60
+```
+
+```bash
+python -m src.simulation_suite ab-policy --env testing --steps 40 --seed 123
+```
+
+Launch Streamlit frontend dashboard:
+
+```bash
+streamlit run src/frontend_app.py
+```
+
+Dashboard includes:
+- status and metrics refresh
+- teach / ask / sleep controls
+- tenant org/user/attempt flows
+- review queue + analytics
+- memory explorer (`/memories`)
+- pilot evaluation + pilot history (`/pilot/history`)
+- one-click demo data seeding (sidebar: `Seed Demo Data`) with backdated attempts
+- demo readiness warnings (no memories, no due items, review-skipped signals)
+
 ---
 
 ## API Endpoints
@@ -216,6 +246,7 @@ Current test suite covers:
 - persistence roundtrip
 - API contract checks (`/status`, `/teach`, `/ask`, `/sleep`, `/memories`, `/metrics`, `/reset`)
 - deterministic short simulation integration run
+- simulation-suite runs (policy A/B comparison, reproducibility checks, persistence/restart)
 
 ---
 

@@ -52,6 +52,7 @@ data:
 runtime:
   checkpoint_path: "data/test_network_checkpoint.pt"
   artifact_dir: "logs/test_runs"
+  simulated_step_seconds: 0.0
   dev_reset_enabled: true
   tenant_db_path: "data/test_tenant_memory.db"
   analytics_window_days: 7

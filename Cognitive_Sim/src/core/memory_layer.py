@@ -93,6 +93,23 @@ class MemoryLayer:
         due_in = max(float(record.interval_seconds), due_in)
         return float(record.last_reviewed + due_in)
 
+    def advance_time(self, delta_seconds: float) -> None:
+        delta = float(delta_seconds)
+        if delta <= 0:
+            return
+        with self._lock:
+            for record in self.memories.values():
+                record.last_reviewed -= delta
+                record.last_access -= delta
+                record.created_at -= delta
+                record.next_review_at -= delta
+                self._scheduled_due[record.key] = record.next_review_at
+            self._review_heap = [
+                (due_at - delta, seq, mem_id)
+                for due_at, seq, mem_id in self._review_heap
+            ]
+            heapq.heapify(self._review_heap)
+
     def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
         record = self.memories.get(memory_id)
         if record is None:

@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import click
 import torch
@@ -19,8 +19,14 @@ from src.utils.seed import set_global_seed
 
 
 class CognitiveSimulation:
-    def __init__(self, config_env: str = "development", fresh: bool = False, seed: int = 42):
-        self.config: SimulationConfig = load_config(config_env)
+    def __init__(
+        self,
+        config_env: str = "development",
+        fresh: bool = False,
+        seed: int = 42,
+        config: Optional[SimulationConfig] = None,
+    ):
+        self.config: SimulationConfig = config if config is not None else load_config(config_env)
         self.seed = int(seed if seed is not None else self.config.seed)
         set_global_seed(self.seed)
 
@@ -96,15 +102,25 @@ class CognitiveSimulation:
                 self.metrics.inc("learn_events")
             elif action == "review":
                 result = self.agent.review()
-                self.metrics.inc("review_events")
+                self.metrics.inc("review_selected")
                 if result.get("status") == "reviewed_success":
+                    self.metrics.inc("review_events")
+                    self.metrics.inc("review_attempted")
                     self.metrics.inc("review_success")
                 if result.get("status") == "reviewed_failed":
+                    self.metrics.inc("review_events")
+                    self.metrics.inc("review_attempted")
                     self.metrics.inc("review_failure")
                     self.metrics.inc("forgetting_events")
+                if result.get("status") == "skipped":
+                    self.metrics.inc("review_skipped")
             else:
                 result = self.agent.sleep()
                 self.metrics.inc("sleep_events")
+
+            simulated_step_seconds = float(self.config.runtime.simulated_step_seconds)
+            if simulated_step_seconds > 0:
+                self.memory.advance_time(simulated_step_seconds)
 
             with torch.no_grad():
                 outputs, _ = self.network(batch_inputs)

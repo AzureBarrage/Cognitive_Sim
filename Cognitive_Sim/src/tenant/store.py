@@ -1,4 +1,6 @@
+import json
 import math
+import random
 import sqlite3
 import threading
 import time
@@ -101,6 +103,54 @@ class TenantMemoryStore:
                 """
             )
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_pilot_org_time ON pilot_evaluations(org_id, evaluated_at)")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pilot_runs (
+                    id TEXT PRIMARY KEY,
+                    org_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    treatment_ratio REAL NOT NULL,
+                    random_seed INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    FOREIGN KEY(org_id) REFERENCES organizations(id)
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pilot_runs_org_time ON pilot_runs(org_id, created_at)")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pilot_cohort_assignments (
+                    pilot_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    cohort TEXT NOT NULL,
+                    assigned_at REAL NOT NULL,
+                    PRIMARY KEY(pilot_id, user_id),
+                    FOREIGN KEY(pilot_id) REFERENCES pilot_runs(id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pilot_cohort_lookup ON pilot_cohort_assignments(pilot_id, cohort)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pilot_baselines (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pilot_id TEXT NOT NULL,
+                    captured_at REAL NOT NULL,
+                    window_days INTEGER NOT NULL,
+                    control_users INTEGER NOT NULL,
+                    treatment_users INTEGER NOT NULL,
+                    control_metrics TEXT NOT NULL,
+                    treatment_metrics TEXT NOT NULL,
+                    overall_metrics TEXT NOT NULL,
+                    FOREIGN KEY(pilot_id) REFERENCES pilot_runs(id)
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pilot_baselines_time ON pilot_baselines(pilot_id, captured_at)")
             self._conn.commit()
 
     def close(self) -> None:
@@ -292,17 +342,213 @@ class TenantMemoryStore:
             rows = self._conn.execute("SELECT id FROM users WHERE org_id = ?", (org_id,)).fetchall()
         return [str(row["id"]) for row in rows]
 
-    def compute_user_analytics(self, user_id: str, window_days: int = 30) -> Dict[str, Any]:
-        since = time.time() - (float(window_days) * 86400.0)
+    @staticmethod
+    def _aggregate_user_metrics(metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not metrics:
+            return {
+                "users": 0,
+                "attempts": 0,
+                "retention_percentage": 0.0,
+                "forgetting_velocity": 0.0,
+                "unstable_concept_ratio": 0.0,
+                "review_efficiency_score": 0.0,
+                "avg_concept_half_life_hours": 0.0,
+                "at_risk_concepts": 0,
+            }
+
+        count = len(metrics)
+        return {
+            "users": int(count),
+            "attempts": int(sum(int(m.get("attempts", 0)) for m in metrics)),
+            "retention_percentage": float(sum(float(m.get("retention_percentage", 0.0)) for m in metrics) / count),
+            "forgetting_velocity": float(sum(float(m.get("forgetting_velocity", 0.0)) for m in metrics) / count),
+            "unstable_concept_ratio": float(sum(float(m.get("unstable_concept_ratio", 0.0)) for m in metrics) / count),
+            "review_efficiency_score": float(sum(float(m.get("review_efficiency_score", 0.0)) for m in metrics) / count),
+            "avg_concept_half_life_hours": float(sum(float(m.get("avg_concept_half_life_hours", 0.0)) for m in metrics) / count),
+            "at_risk_concepts": int(sum(int(m.get("at_risk_concepts", 0)) for m in metrics)),
+        }
+
+    def setup_pilot(
+        self,
+        org_id: str,
+        name: str,
+        treatment_ratio: float = 0.5,
+        random_seed: int = 42,
+        pilot_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ratio = float(treatment_ratio)
+        if ratio <= 0.0 or ratio >= 1.0:
+            raise ValueError("treatment_ratio must be > 0 and < 1")
+
+        with self._lock:
+            org = self._conn.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone()
+            if org is None:
+                raise ValueError("organization_not_found")
+
+        users = self._user_ids_for_org(org_id)
+        if len(users) < 2:
+            raise ValueError("pilot_setup_requires_at_least_two_users")
+
+        ordered_users = list(users)
+        random.Random(int(random_seed)).shuffle(ordered_users)
+
+        treatment_count = int(round(len(ordered_users) * ratio))
+        treatment_count = max(1, min(len(ordered_users) - 1, treatment_count))
+        treatment_users = ordered_users[:treatment_count]
+        control_users = ordered_users[treatment_count:]
+
+        pid = pilot_id or ("pilot_" + uuid.uuid4().hex[:16])
+        now = time.time()
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO pilot_runs(id, org_id, name, created_at, treatment_ratio, random_seed, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (pid, org_id, name, now, ratio, int(random_seed), "configured"),
+            )
+            for uid in control_users:
+                self._conn.execute(
+                    "INSERT INTO pilot_cohort_assignments(pilot_id, user_id, cohort, assigned_at) VALUES (?, ?, ?, ?)",
+                    (pid, uid, "control", now),
+                )
+            for uid in treatment_users:
+                self._conn.execute(
+                    "INSERT INTO pilot_cohort_assignments(pilot_id, user_id, cohort, assigned_at) VALUES (?, ?, ?, ?)",
+                    (pid, uid, "treatment", now),
+                )
+            self._conn.commit()
+
+        return {
+            "pilot_id": pid,
+            "org_id": org_id,
+            "name": name,
+            "status": "configured",
+            "treatment_ratio": ratio,
+            "random_seed": int(random_seed),
+            "control_count": int(len(control_users)),
+            "treatment_count": int(len(treatment_users)),
+            "control_user_ids": control_users,
+            "treatment_user_ids": treatment_users,
+            "created_at": now,
+        }
+
+    def get_pilot_run(self, pilot_id: str) -> Dict[str, Any]:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM pilot_runs WHERE id = ?", (pilot_id,)).fetchone()
+            if row is None:
+                raise ValueError("pilot_not_found")
+
+            assignments = self._conn.execute(
+                "SELECT user_id, cohort FROM pilot_cohort_assignments WHERE pilot_id = ? ORDER BY user_id ASC",
+                (pilot_id,),
+            ).fetchall()
+            baseline_row = self._conn.execute(
+                "SELECT * FROM pilot_baselines WHERE pilot_id = ? ORDER BY captured_at DESC LIMIT 1",
+                (pilot_id,),
+            ).fetchone()
+
+        control_user_ids = [str(item["user_id"]) for item in assignments if str(item["cohort"]) == "control"]
+        treatment_user_ids = [str(item["user_id"]) for item in assignments if str(item["cohort"]) == "treatment"]
+
+        latest_baseline: Optional[Dict[str, Any]] = None
+        if baseline_row is not None:
+            latest_baseline = {
+                "baseline_id": int(baseline_row["id"]),
+                "captured_at": float(baseline_row["captured_at"]),
+                "window_days": int(baseline_row["window_days"]),
+                "control_users": int(baseline_row["control_users"]),
+                "treatment_users": int(baseline_row["treatment_users"]),
+                "control_metrics": json.loads(str(baseline_row["control_metrics"])),
+                "treatment_metrics": json.loads(str(baseline_row["treatment_metrics"])),
+                "overall_metrics": json.loads(str(baseline_row["overall_metrics"])),
+            }
+
+        return {
+            "pilot_id": str(row["id"]),
+            "org_id": str(row["org_id"]),
+            "name": str(row["name"]),
+            "status": str(row["status"]),
+            "treatment_ratio": float(row["treatment_ratio"]),
+            "random_seed": int(row["random_seed"]),
+            "created_at": float(row["created_at"]),
+            "control_count": int(len(control_user_ids)),
+            "treatment_count": int(len(treatment_user_ids)),
+            "control_user_ids": control_user_ids,
+            "treatment_user_ids": treatment_user_ids,
+            "latest_baseline": latest_baseline,
+        }
+
+    def capture_pilot_baseline(
+        self,
+        pilot_id: str,
+        window_days: int = 30,
+        captured_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        reference_time = float(time.time() if captured_at is None else captured_at)
+        days = max(1, int(window_days))
+
+        run = self.get_pilot_run(pilot_id)
+        control_users = list(run["control_user_ids"])
+        treatment_users = list(run["treatment_user_ids"])
+
+        if not control_users or not treatment_users:
+            raise ValueError("pilot_requires_control_and_treatment_users")
+
+        control_metrics = self._aggregate_user_metrics(
+            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in control_users]
+        )
+        treatment_metrics = self._aggregate_user_metrics(
+            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in treatment_users]
+        )
+        overall_metrics = self._aggregate_user_metrics(
+            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in (control_users + treatment_users)]
+        )
+
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO pilot_baselines(
+                    pilot_id, captured_at, window_days, control_users, treatment_users,
+                    control_metrics, treatment_metrics, overall_metrics
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pilot_id,
+                    reference_time,
+                    days,
+                    int(len(control_users)),
+                    int(len(treatment_users)),
+                    json.dumps(control_metrics),
+                    json.dumps(treatment_metrics),
+                    json.dumps(overall_metrics),
+                ),
+            )
+            self._conn.commit()
+            baseline_id = int(cursor.lastrowid)
+
+        return {
+            "baseline_id": baseline_id,
+            "pilot_id": pilot_id,
+            "captured_at": reference_time,
+            "window_days": days,
+            "control_metrics": control_metrics,
+            "treatment_metrics": treatment_metrics,
+            "overall_metrics": overall_metrics,
+        }
+
+    def _compute_user_analytics_at(self, user_id: str, window_days: int, reference_time: float) -> Dict[str, Any]:
+        since = float(reference_time) - (float(window_days) * 86400.0)
         with self._lock:
             attempts_row = self._conn.execute(
                 """
                 SELECT COUNT(*) as total,
                        SUM(correct) as successes
                 FROM attempt_events
-                WHERE user_id = ? AND attempted_at >= ?
+                WHERE user_id = ? AND attempted_at >= ? AND attempted_at <= ?
                 """,
-                (user_id, since),
+                (user_id, since, float(reference_time)),
             ).fetchone()
             states = self._conn.execute(
                 "SELECT * FROM user_memory_state WHERE user_id = ?",
@@ -325,7 +571,6 @@ class TenantMemoryStore:
                 "at_risk_concepts": 0,
             }
 
-        now = time.time()
         retentions: List[float] = []
         half_lives: List[float] = []
         at_risk = 0
@@ -333,7 +578,7 @@ class TenantMemoryStore:
         for row in states:
             stability = float(row["stability"])
             decay_rate = float(row["decay_rate"])
-            elapsed = now - float(row["last_reviewed"])
+            elapsed = float(reference_time) - float(row["last_reviewed"])
             retention = self._safe_retention(float(row["strength"]), stability, decay_rate, elapsed)
             retentions.append(retention)
             if retention < 0.4:
@@ -358,6 +603,9 @@ class TenantMemoryStore:
             "at_risk_concepts": int(at_risk),
         }
 
+    def compute_user_analytics(self, user_id: str, window_days: int = 30) -> Dict[str, Any]:
+        return self._compute_user_analytics_at(user_id=user_id, window_days=window_days, reference_time=time.time())
+
     def compute_org_analytics(self, org_id: str, window_days: int = 30) -> Dict[str, Any]:
         user_ids = self._user_ids_for_org(org_id)
         if not user_ids:
@@ -373,15 +621,16 @@ class TenantMemoryStore:
             }
 
         metrics = [self.compute_user_analytics(user_id=uid, window_days=window_days) for uid in user_ids]
+        aggregated = self._aggregate_user_metrics(metrics)
         return {
             "org_id": org_id,
-            "users": len(user_ids),
-            "retention_percentage": float(sum(m["retention_percentage"] for m in metrics) / len(metrics)),
-            "forgetting_velocity": float(sum(m["forgetting_velocity"] for m in metrics) / len(metrics)),
-            "unstable_concept_ratio": float(sum(m["unstable_concept_ratio"] for m in metrics) / len(metrics)),
-            "review_efficiency_score": float(sum(m["review_efficiency_score"] for m in metrics) / len(metrics)),
-            "avg_concept_half_life_hours": float(sum(m["avg_concept_half_life_hours"] for m in metrics) / len(metrics)),
-            "at_risk_concepts": int(sum(int(m["at_risk_concepts"]) for m in metrics)),
+            "users": int(aggregated["users"]),
+            "retention_percentage": float(aggregated["retention_percentage"]),
+            "forgetting_velocity": float(aggregated["forgetting_velocity"]),
+            "unstable_concept_ratio": float(aggregated["unstable_concept_ratio"]),
+            "review_efficiency_score": float(aggregated["review_efficiency_score"]),
+            "avg_concept_half_life_hours": float(aggregated["avg_concept_half_life_hours"]),
+            "at_risk_concepts": int(aggregated["at_risk_concepts"]),
         }
 
     @staticmethod

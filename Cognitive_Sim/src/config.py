@@ -74,6 +74,7 @@ class DataConfig(BaseModel):
 class RuntimeConfig(BaseModel):
     checkpoint_path: str = Field(default="data/network_checkpoint.pt")
     artifact_dir: str = Field(default="logs/runs")
+    simulated_step_seconds: float = Field(default=0.0, ge=0.0)
     dev_reset_enabled: bool = Field(default=True)
     tenant_db_path: str = Field(default="data/tenant_memory.db")
     analytics_window_days: int = Field(default=30, ge=1)

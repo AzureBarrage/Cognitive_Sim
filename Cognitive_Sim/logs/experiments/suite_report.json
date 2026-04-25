@@ -1,0 +1,266 @@
+{
+  "suite": "standard",
+  "config_env": "testing",
+  "seed": 123,
+  "steps": 40,
+  "results": {
+    "policy_ab": {
+      "experiment": "policy_ab_comparison",
+      "config_env": "testing",
+      "steps": 40,
+      "seed": 123,
+      "runs": {
+        "heuristic": {
+          "summary": {
+            "duration_seconds": 0.12247729301452637,
+            "events": {
+              "learn_events": 4,
+              "review_events": 34,
+              "review_selected": 34,
+              "review_attempted": 34,
+              "review_skipped": 0,
+              "review_success": 0,
+              "review_failure": 34,
+              "forgetting_events": 34,
+              "sleep_events": 2
+            },
+            "avg_loss": 0.07633579075336457,
+            "avg_accuracy": 0.18874409347772597,
+            "avg_entropy": 9.135265755653382,
+            "avg_energy": 24.3,
+            "memory": {
+              "count": 4.0,
+              "stable": 0.0,
+              "unstable": 4.0,
+              "forgotten": 1.0,
+              "avg_retention": 1.569404466039872e-55
+            }
+          },
+          "artifact_dir": "logs\\experiments\\policy_heuristic\\artifacts",
+          "checkpoint_path": "logs\\experiments\\policy_heuristic\\network_checkpoint.pt",
+          "memory_index_path": "logs\\experiments\\policy_heuristic\\memory_index.json",
+          "policy_type": "heuristic",
+          "seed": 123
+        },
+        "bandit": {
+          "summary": {
+            "duration_seconds": 0.09331607818603516,
+            "events": {
+              "learn_events": 3,
+              "review_events": 5,
+              "review_selected": 5,
+              "review_attempted": 5,
+              "review_skipped": 0,
+              "review_success": 0,
+              "review_failure": 5,
+              "forgetting_events": 5,
+              "sleep_events": 32
+            },
+            "avg_loss": 0.05416718423366547,
+            "avg_accuracy": 0.193162739276886,
+            "avg_entropy": 9.136569166183472,
+            "avg_energy": 113.325,
+            "memory": {
+              "count": 3.0,
+              "stable": 1.0,
+              "unstable": 2.0,
+              "forgotten": 0.0,
+              "avg_retention": 0.2493796593534916
+            }
+          },
+          "artifact_dir": "logs\\experiments\\policy_bandit\\artifacts",
+          "checkpoint_path": "logs\\experiments\\policy_bandit\\network_checkpoint.pt",
+          "memory_index_path": "logs\\experiments\\policy_bandit\\memory_index.json",
+          "policy_type": "bandit",
+          "seed": 123
+        }
+      },
+      "comparison": {
+        "heuristic_metrics": {
+          "avg_loss": 0.07633579075336457,
+          "avg_accuracy": 0.18874409347772597,
+          "avg_entropy": 9.135265755653382,
+          "avg_energy": 24.3,
+          "memory_count": 4.0,
+          "memory_avg_retention": 1.569404466039872e-55,
+          "review_success": 0.0,
+          "review_failure": 34.0,
+          "forgetting_events": 34.0
+        },
+        "bandit_metrics": {
+          "avg_loss": 0.05416718423366547,
+          "avg_accuracy": 0.193162739276886,
+          "avg_entropy": 9.136569166183472,
+          "avg_energy": 113.325,
+          "memory_count": 3.0,
+          "memory_avg_retention": 0.2493796593534916,
+          "review_success": 0.0,
+          "review_failure": 5.0,
+          "forgetting_events": 5.0
+        },
+        "bandit_minus_heuristic": {
+          "avg_loss": -0.022168606519699097,
+          "avg_accuracy": 0.004418645799160015,
+          "avg_entropy": 0.0013034105300899768,
+          "avg_energy": 89.025,
+          "memory_count": -1.0,
+          "memory_avg_retention": 0.2493796593534916,
+          "review_success": 0.0,
+          "review_failure": -29.0,
+          "forgetting_events": -29.0
+        }
+      }
+    },
+    "reproducibility": {
+      "experiment": "reproducibility_check",
+      "config_env": "testing",
+      "steps": 20,
+      "seed": 123,
+      "tolerance": 1e-09,
+      "passed": true,
+      "first_run": {
+        "summary": {
+          "duration_seconds": 0.03892874717712402,
+          "events": {
+            "learn_events": 1,
+            "review_events": 18,
+            "review_selected": 18,
+            "review_attempted": 18,
+            "review_skipped": 0,
+            "review_success": 0,
+            "review_failure": 18,
+            "forgetting_events": 18,
+            "sleep_events": 1
+          },
+          "avg_loss": 0.04429818093776703,
+          "avg_accuracy": 0.19175320565700532,
+          "avg_entropy": 9.13392448425293,
+          "avg_energy": 27.3,
+          "memory": {
+            "count": 1.0,
+            "stable": 0.0,
+            "unstable": 1.0,
+            "forgotten": 0.0,
+            "avg_retention": 7.685331166524196e-20
+          }
+        },
+        "artifact_dir": "logs\\experiments\\repro_run_1\\artifacts",
+        "checkpoint_path": "logs\\experiments\\repro_run_1\\network_checkpoint.pt",
+        "memory_index_path": "logs\\experiments\\repro_run_1\\memory_index.json",
+        "policy_type": "heuristic",
+        "seed": 123
+      },
+      "second_run": {
+        "summary": {
+          "duration_seconds": 0.03700971603393555,
+          "events": {
+            "learn_events": 1,
+            "review_events": 18,
+            "review_selected": 18,
+            "review_attempted": 18,
+            "review_skipped": 0,
+            "review_success": 0,
+            "review_failure": 18,
+            "forgetting_events": 18,
+            "sleep_events": 1
+          },
+          "avg_loss": 0.04429818093776703,
+          "avg_accuracy": 0.19175320565700532,
+          "avg_entropy": 9.13392448425293,
+          "avg_energy": 27.3,
+          "memory": {
+            "count": 1.0,
+            "stable": 0.0,
+            "unstable": 1.0,
+            "forgotten": 0.0,
+            "avg_retention": 7.685617089269733e-20
+          }
+        },
+        "artifact_dir": "logs\\experiments\\repro_run_2\\artifacts",
+        "checkpoint_path": "logs\\experiments\\repro_run_2\\network_checkpoint.pt",
+        "memory_index_path": "logs\\experiments\\repro_run_2\\memory_index.json",
+        "policy_type": "heuristic",
+        "seed": 123
+      },
+      "deltas": {
+        "avg_loss": 0.0,
+        "avg_accuracy": 0.0,
+        "avg_entropy": 0.0,
+        "avg_energy": 0.0,
+        "memory_count": 0.0,
+        "memory_avg_retention": 2.8592274553619727e-24,
+        "review_success": 0.0,
+        "review_failure": 0.0,
+        "forgetting_events": 0.0
+      }
+    },
+    "persistence_restart": {
+      "experiment": "persistence_restart_check",
+      "config_env": "testing",
+      "seed": 123,
+      "steps_before_restart": 40,
+      "steps_after_restart": 13,
+      "passed": true,
+      "initial_run": {
+        "summary": {
+          "duration_seconds": 0.08191108703613281,
+          "events": {
+            "learn_events": 4,
+            "review_events": 34,
+            "review_selected": 34,
+            "review_attempted": 34,
+            "review_skipped": 0,
+            "review_success": 0,
+            "review_failure": 34,
+            "forgetting_events": 34,
+            "sleep_events": 2
+          },
+          "avg_loss": 0.07633579075336457,
+          "avg_accuracy": 0.18874409347772597,
+          "avg_entropy": 9.135265755653382,
+          "avg_energy": 24.3,
+          "memory": {
+            "count": 4.0,
+            "stable": 0.0,
+            "unstable": 4.0,
+            "forgotten": 1.0,
+            "avg_retention": 1.5702677526949801e-55
+          }
+        },
+        "artifact_dir": "logs\\experiments\\persistence_restart\\artifacts",
+        "checkpoint_path": "logs\\experiments\\persistence_restart\\network_checkpoint.pt",
+        "memory_index_path": "logs\\experiments\\persistence_restart\\memory_index.json",
+        "policy_type": "heuristic",
+        "seed": 123
+      },
+      "loaded_memory_count_before_resume": 4.0,
+      "resumed_summary": {
+        "duration_seconds": 0.05167055130004883,
+        "events": {
+          "learn_events": 0,
+          "review_events": 13,
+          "review_selected": 13,
+          "review_attempted": 13,
+          "review_skipped": 0,
+          "review_success": 0,
+          "review_failure": 13,
+          "forgetting_events": 13,
+          "sleep_events": 0
+        },
+        "avg_loss": 0.0,
+        "avg_accuracy": 0.20187695668293879,
+        "avg_entropy": 9.137452125549316,
+        "avg_energy": 36.0,
+        "memory": {
+          "count": 4.0,
+          "stable": 0.0,
+          "unstable": 4.0,
+          "forgotten": 1.0,
+          "avg_retention": 9.823044628580516e-110
+        }
+      },
+      "checkpoint_exists": true,
+      "memory_index_exists": true
+    }
+  }
+}

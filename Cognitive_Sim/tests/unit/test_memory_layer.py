@@ -57,3 +57,20 @@ def test_persistence_roundtrip(tmp_path) -> None:
     assert restored is not None
     assert "input" in restored
     assert "target" in restored
+
+
+def test_advance_time_makes_memory_due(tmp_path) -> None:
+    config = MemoryConfig(
+        initial_interval_seconds=30.0,
+        store_dir=str(tmp_path / "store"),
+        index_path=str(tmp_path / "index.json"),
+    )
+    memory = MemoryLayer(config)
+    memory.add_memory("advance_due", {"input": torch.randn(1, 10), "target": torch.randn(1, 5)})
+
+    before = memory.get_due_review_count()
+    memory.advance_time(120.0)
+    after = memory.get_due_review_count()
+
+    assert before == 0
+    assert after >= 1

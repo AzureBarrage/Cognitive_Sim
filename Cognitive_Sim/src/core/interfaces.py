@@ -32,6 +32,9 @@ class MemoryStore(Protocol):
     def get_due_review_count(self, limit: int = 1000) -> int:
         ...
 
+    def advance_time(self, delta_seconds: float) -> None:
+        ...
+
 
 class Policy(Protocol):
     def select_action(self, context: PolicyContext) -> ActionType:

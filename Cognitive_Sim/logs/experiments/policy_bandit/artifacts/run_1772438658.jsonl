@@ -1,0 +1,180 @@
+{"category": "training", "timestamp": 0.0017037391662597656, "step": 0, "loss": 0.0, "entropy": 9.189655303955078, "accuracy": 0.2020135521888733, "energy": 100.0}
+{"category": "agent", "timestamp": 0.0027027130126953125, "step": 0, "action": "review", "energy": 100.0, "memory_count": 0, "entropy": 9.189655303955078, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.003086090087890625, "step": 0, "memory_usage": 260.4140625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.004167079925537109, "step": 1, "loss": 0.0, "entropy": 9.189655303955078, "accuracy": 0.28068023920059204, "energy": 100.0}
+{"category": "agent", "timestamp": 0.004613637924194336, "step": 1, "action": "review", "energy": 100.0, "memory_count": 0, "entropy": 9.189655303955078, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.005003690719604492, "step": 1, "memory_usage": 260.4140625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.006331205368041992, "step": 2, "loss": 0.0, "entropy": 9.189655303955078, "accuracy": 0.15558689832687378, "energy": 100.0}
+{"category": "agent", "timestamp": 0.006651163101196289, "step": 2, "action": "review", "energy": 100.0, "memory_count": 0, "entropy": 9.189655303955078, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.006964921951293945, "step": 2, "memory_usage": 260.41796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.008053779602050781, "step": 3, "loss": 0.0, "entropy": 9.189655303955078, "accuracy": 0.1933126449584961, "energy": 100.0}
+{"category": "agent", "timestamp": 0.00828409194946289, "step": 3, "action": "review", "energy": 100.0, "memory_count": 0, "entropy": 9.189655303955078, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.008563518524169922, "step": 3, "memory_usage": 260.41796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.009571313858032227, "step": 4, "loss": 0.0, "entropy": 9.189655303955078, "accuracy": 0.20321369171142578, "energy": 100.0}
+{"category": "agent", "timestamp": 0.009837150573730469, "step": 4, "action": "review", "energy": 100.0, "memory_count": 0, "entropy": 9.189655303955078, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.010147333145141602, "step": 4, "memory_usage": 260.41796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.014138936996459961, "step": 5, "loss": 0.850509524345398, "entropy": 9.178470611572266, "accuracy": 0.13300657272338867, "energy": 95.0}
+{"category": "agent", "timestamp": 0.01463460922241211, "step": 5, "action": "learn_new", "energy": 95.0, "memory_count": 1, "entropy": 9.178470611572266, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.01529836654663086, "step": 5, "memory_usage": 261.765625, "cpu_usage": 1220.1}
+{"category": "training", "timestamp": 0.0168764591217041, "step": 6, "loss": 0.0, "entropy": 9.178470611572266, "accuracy": 0.20517879724502563, "energy": 119.0}
+{"category": "agent", "timestamp": 0.017206907272338867, "step": 6, "action": "sleep", "energy": 119.0, "memory_count": 1, "entropy": 9.178470611572266, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.017496585845947266, "step": 6, "memory_usage": 261.765625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.01854538917541504, "step": 7, "loss": 0.0, "entropy": 9.178470611572266, "accuracy": 0.11708438396453857, "energy": 119.0}
+{"category": "agent", "timestamp": 0.018828392028808594, "step": 7, "action": "review", "energy": 119.0, "memory_count": 1, "entropy": 9.178470611572266, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.019246578216552734, "step": 7, "memory_usage": 261.765625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.02234196662902832, "step": 8, "loss": 0.7758890390396118, "entropy": 9.16105842590332, "accuracy": 0.16417312622070312, "energy": 114.0}
+{"category": "agent", "timestamp": 0.022578716278076172, "step": 8, "action": "learn_new", "energy": 114.0, "memory_count": 2, "entropy": 9.16105842590332, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.02281022071838379, "step": 8, "memory_usage": 261.76953125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.023725032806396484, "step": 9, "loss": 0.0, "entropy": 9.16105842590332, "accuracy": 0.0910571813583374, "energy": 114.0}
+{"category": "agent", "timestamp": 0.024008750915527344, "step": 9, "action": "review", "energy": 114.0, "memory_count": 2, "entropy": 9.16105842590332, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.02424144744873047, "step": 9, "memory_usage": 261.76953125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.025266647338867188, "step": 10, "loss": 0.0, "entropy": 9.16105842590332, "accuracy": 0.20463436841964722, "energy": 114.0}
+{"category": "agent", "timestamp": 0.025572776794433594, "step": 10, "action": "review", "energy": 114.0, "memory_count": 2, "entropy": 9.16105842590332, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.02583456039428711, "step": 10, "memory_usage": 261.76953125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.028743982315063477, "step": 11, "loss": 0.6982502937316895, "entropy": 9.150007247924805, "accuracy": 0.23661696910858154, "energy": 109.0}
+{"category": "agent", "timestamp": 0.029065370559692383, "step": 11, "action": "learn_new", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.0293271541595459, "step": 11, "memory_usage": 261.7734375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.030765771865844727, "step": 12, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.16194140911102295, "energy": 109.0}
+{"category": "agent", "timestamp": 0.03116774559020996, "step": 12, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03149819374084473, "step": 12, "memory_usage": 261.77734375, "cpu_usage": 8678.9}
+{"category": "training", "timestamp": 0.03251051902770996, "step": 13, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.2500518560409546, "energy": 109.0}
+{"category": "agent", "timestamp": 0.03272104263305664, "step": 13, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03295493125915527, "step": 13, "memory_usage": 261.78125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.033818721771240234, "step": 14, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.14120328426361084, "energy": 109.0}
+{"category": "agent", "timestamp": 0.03402400016784668, "step": 14, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03424835205078125, "step": 14, "memory_usage": 261.78125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.035222530364990234, "step": 15, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.27074575424194336, "energy": 109.0}
+{"category": "agent", "timestamp": 0.03548431396484375, "step": 15, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03574967384338379, "step": 15, "memory_usage": 261.78125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.03706002235412598, "step": 16, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.1516067385673523, "energy": 109.0}
+{"category": "agent", "timestamp": 0.03733325004577637, "step": 16, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03761100769042969, "step": 16, "memory_usage": 261.78515625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.03856086730957031, "step": 17, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.15442979335784912, "energy": 109.0}
+{"category": "agent", "timestamp": 0.038767337799072266, "step": 17, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.03907012939453125, "step": 17, "memory_usage": 261.78515625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.04050326347351074, "step": 18, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.2936871647834778, "energy": 109.0}
+{"category": "agent", "timestamp": 0.04076361656188965, "step": 18, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.04103851318359375, "step": 18, "memory_usage": 261.78515625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.04190778732299805, "step": 19, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.22982966899871826, "energy": 109.0}
+{"category": "agent", "timestamp": 0.04211616516113281, "step": 19, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.04233860969543457, "step": 19, "memory_usage": 261.78515625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.04341268539428711, "step": 20, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.20830291509628296, "energy": 109.0}
+{"category": "agent", "timestamp": 0.04368257522583008, "step": 20, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.04393887519836426, "step": 20, "memory_usage": 261.78515625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.04495835304260254, "step": 21, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.2369753122329712, "energy": 109.0}
+{"category": "agent", "timestamp": 0.04524588584899902, "step": 21, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.0455324649810791, "step": 21, "memory_usage": 261.7890625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.046537160873413086, "step": 22, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.113503098487854, "energy": 109.0}
+{"category": "agent", "timestamp": 0.0467379093170166, "step": 22, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.04697680473327637, "step": 22, "memory_usage": 261.7890625, "cpu_usage": 12852.1}
+{"category": "training", "timestamp": 0.04782366752624512, "step": 23, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.30462485551834106, "energy": 109.0}
+{"category": "agent", "timestamp": 0.048073768615722656, "step": 23, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.04832863807678223, "step": 23, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0494990348815918, "step": 24, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.1880863904953003, "energy": 109.0}
+{"category": "agent", "timestamp": 0.04971957206726074, "step": 24, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.0500338077545166, "step": 24, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.051104068756103516, "step": 25, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.09304344654083252, "energy": 109.0}
+{"category": "agent", "timestamp": 0.051329851150512695, "step": 25, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.051570892333984375, "step": 25, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.05269455909729004, "step": 26, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.1989678144454956, "energy": 109.0}
+{"category": "agent", "timestamp": 0.052924394607543945, "step": 26, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.05315279960632324, "step": 26, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.053997039794921875, "step": 27, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.2544902563095093, "energy": 109.0}
+{"category": "agent", "timestamp": 0.05419659614562988, "step": 27, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.054431915283203125, "step": 27, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.05530834197998047, "step": 28, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.21197956800460815, "energy": 109.0}
+{"category": "agent", "timestamp": 0.05552959442138672, "step": 28, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.05579018592834473, "step": 28, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0569455623626709, "step": 29, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.09510821104049683, "energy": 109.0}
+{"category": "agent", "timestamp": 0.05716300010681152, "step": 29, "action": "review", "energy": 109.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.05739951133728027, "step": 29, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.058641910552978516, "step": 30, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.25245749950408936, "energy": 133.0}
+{"category": "agent", "timestamp": 0.05888223648071289, "step": 30, "action": "sleep", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.05917954444885254, "step": 30, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06027412414550781, "step": 31, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.17186486721038818, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06049990653991699, "step": 31, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06076359748840332, "step": 31, "memory_usage": 261.79296875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06180739402770996, "step": 32, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.09939193725585938, "energy": 133.0}
+{"category": "agent", "timestamp": 0.062035560607910156, "step": 32, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06226515769958496, "step": 32, "memory_usage": 261.796875, "cpu_usage": 12482.5}
+{"category": "training", "timestamp": 0.06313943862915039, "step": 33, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.24244719743728638, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06334924697875977, "step": 33, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06357526779174805, "step": 33, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06455779075622559, "step": 34, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.24273550510406494, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06477141380310059, "step": 34, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06500387191772461, "step": 34, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06588387489318848, "step": 35, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.14453327655792236, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06611204147338867, "step": 35, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06634831428527832, "step": 35, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06778168678283691, "step": 36, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.25023794174194336, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06807494163513184, "step": 36, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06835246086120605, "step": 36, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.06938362121582031, "step": 37, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.16931229829788208, "energy": 133.0}
+{"category": "agent", "timestamp": 0.06961393356323242, "step": 37, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.06985902786254883, "step": 37, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.07085585594177246, "step": 38, "loss": 0.0, "entropy": 9.150007247924805, "accuracy": 0.19120997190475464, "energy": 133.0}
+{"category": "agent", "timestamp": 0.07107114791870117, "step": 38, "action": "review", "energy": 133.0, "memory_count": 3, "entropy": 9.150007247924805, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.07130026817321777, "step": 38, "memory_usage": 261.796875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.07400894165039062, "step": 39, "loss": 0.7595241069793701, "entropy": 9.137577056884766, "accuracy": 0.17328470945358276, "energy": 128.0}
+{"category": "agent", "timestamp": 0.07431912422180176, "step": 39, "action": "learn_new", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.07461118698120117, "step": 39, "memory_usage": 261.8046875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.07572603225708008, "step": 40, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.1642201542854309, "energy": 128.0}
+{"category": "agent", "timestamp": 0.07597923278808594, "step": 40, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.07623720169067383, "step": 40, "memory_usage": 261.8046875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.07720065116882324, "step": 41, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.42570173740386963, "energy": 128.0}
+{"category": "agent", "timestamp": 0.07753729820251465, "step": 41, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.07789921760559082, "step": 41, "memory_usage": 261.8046875, "cpu_usage": 11295.2}
+{"category": "training", "timestamp": 0.07939529418945312, "step": 42, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.13941383361816406, "energy": 128.0}
+{"category": "agent", "timestamp": 0.07975959777832031, "step": 42, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.0800473690032959, "step": 42, "memory_usage": 261.8046875, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.08136916160583496, "step": 43, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.13037168979644775, "energy": 128.0}
+{"category": "agent", "timestamp": 0.08161449432373047, "step": 43, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08187198638916016, "step": 43, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.08291268348693848, "step": 44, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.26065343618392944, "energy": 128.0}
+{"category": "agent", "timestamp": 0.08319354057312012, "step": 44, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08354759216308594, "step": 44, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.08472704887390137, "step": 45, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.2508886456489563, "energy": 128.0}
+{"category": "agent", "timestamp": 0.084930419921875, "step": 45, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08515548706054688, "step": 45, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0860130786895752, "step": 46, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.16271990537643433, "energy": 128.0}
+{"category": "agent", "timestamp": 0.08621931076049805, "step": 46, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08644604682922363, "step": 46, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0873713493347168, "step": 47, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.18368178606033325, "energy": 128.0}
+{"category": "agent", "timestamp": 0.08757448196411133, "step": 47, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08779120445251465, "step": 47, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.08915328979492188, "step": 48, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.2223130464553833, "energy": 128.0}
+{"category": "agent", "timestamp": 0.08942341804504395, "step": 48, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.08969593048095703, "step": 48, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.09069466590881348, "step": 49, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.1028972864151001, "energy": 128.0}
+{"category": "agent", "timestamp": 0.09093189239501953, "step": 49, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.09118843078613281, "step": 49, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0922384262084961, "step": 50, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.31496065855026245, "energy": 128.0}
+{"category": "agent", "timestamp": 0.092529296875, "step": 50, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.09280037879943848, "step": 50, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.09383893013000488, "step": 51, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.12776565551757812, "energy": 128.0}
+{"category": "agent", "timestamp": 0.09408903121948242, "step": 51, "action": "review", "energy": 128.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.0943613052368164, "step": 51, "memory_usage": 261.80859375, "cpu_usage": 12049.4}
+{"category": "training", "timestamp": 0.0953826904296875, "step": 52, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.16347235441207886, "energy": 152.0}
+{"category": "agent", "timestamp": 0.09563016891479492, "step": 52, "action": "sleep", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.09592199325561523, "step": 52, "memory_usage": 261.80859375, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.09692001342773438, "step": 53, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.20648455619812012, "energy": 152.0}
+{"category": "agent", "timestamp": 0.09716248512268066, "step": 53, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.09742903709411621, "step": 53, "memory_usage": 261.8125, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.0987858772277832, "step": 54, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.22189843654632568, "energy": 152.0}
+{"category": "agent", "timestamp": 0.09906458854675293, "step": 54, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.09932708740234375, "step": 54, "memory_usage": 261.81640625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.10026955604553223, "step": 55, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.19952070713043213, "energy": 152.0}
+{"category": "agent", "timestamp": 0.10049581527709961, "step": 55, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.1007235050201416, "step": 55, "memory_usage": 261.81640625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.10190939903259277, "step": 56, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.10154187679290771, "energy": 152.0}
+{"category": "agent", "timestamp": 0.10226702690124512, "step": 56, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.10257387161254883, "step": 56, "memory_usage": 261.81640625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.10367774963378906, "step": 57, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.21185636520385742, "energy": 152.0}
+{"category": "agent", "timestamp": 0.10392117500305176, "step": 57, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.10422110557556152, "step": 57, "memory_usage": 261.81640625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.10523271560668945, "step": 58, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.1533139944076538, "energy": 152.0}
+{"category": "agent", "timestamp": 0.10550236701965332, "step": 58, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.1057882308959961, "step": 58, "memory_usage": 261.81640625, "cpu_usage": 0.0}
+{"category": "training", "timestamp": 0.10695672035217285, "step": 59, "loss": 0.0, "entropy": 9.137577056884766, "accuracy": 0.2890115976333618, "energy": 152.0}
+{"category": "agent", "timestamp": 0.10718417167663574, "step": 59, "action": "review", "energy": 152.0, "memory_count": 4, "entropy": 9.137577056884766, "review_success_rate": 0.0}
+{"category": "system", "timestamp": 0.10742068290710449, "step": 59, "memory_usage": 261.81640625, "cpu_usage": 0.0}

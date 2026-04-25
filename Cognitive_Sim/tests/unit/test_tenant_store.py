@@ -31,3 +31,37 @@ def test_tenant_store_analytics(tmp_path) -> None:
     assert 0.0 <= user_metrics["retention_percentage"] <= 1.0
     assert org_metrics["users"] == 1
     store.close()
+
+
+def test_tenant_store_pilot_setup_and_baseline(tmp_path) -> None:
+    store = TenantMemoryStore(str(tmp_path / "tenant.db"))
+    store.create_org(name="Pilot Org", org_id="org_pilot")
+    users = [
+        store.create_user(org_id="org_pilot", email=f"u{idx}@example.com", user_id=f"usr_{idx}")
+        for idx in range(4)
+    ]
+
+    for idx, user in enumerate(users):
+        store.record_attempt(
+            user_id=user["user_id"],
+            concept_id=f"concept_{idx}",
+            correct=(idx % 2 == 0),
+        )
+
+    setup = store.setup_pilot(org_id="org_pilot", name="Support Team Pilot", treatment_ratio=0.5, random_seed=7)
+    assert setup["control_count"] == 2
+    assert setup["treatment_count"] == 2
+
+    snapshot = store.get_pilot_run(setup["pilot_id"])
+    assert snapshot["pilot_id"] == setup["pilot_id"]
+    assert snapshot["latest_baseline"] is None
+
+    baseline = store.capture_pilot_baseline(pilot_id=setup["pilot_id"], window_days=30)
+    assert baseline["pilot_id"] == setup["pilot_id"]
+    assert baseline["control_metrics"]["users"] == 2
+    assert baseline["treatment_metrics"]["users"] == 2
+
+    refreshed_snapshot = store.get_pilot_run(setup["pilot_id"])
+    assert refreshed_snapshot["latest_baseline"] is not None
+    assert refreshed_snapshot["latest_baseline"]["baseline_id"] == baseline["baseline_id"]
+    store.close()

@@ -19,6 +19,9 @@ class MetricsTracker:
         self.counters: Dict[str, int] = {
             "learn_events": 0,
             "review_events": 0,
+            "review_selected": 0,
+            "review_attempted": 0,
+            "review_skipped": 0,
             "review_success": 0,
             "review_failure": 0,
             "forgetting_events": 0,

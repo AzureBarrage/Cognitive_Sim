@@ -99,6 +99,7 @@ class RecordAttemptRequest(BaseModel):
     concept_id: str
     correct: bool
     response_ms: Optional[float] = None
+    attempted_at: Optional[float] = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -109,6 +110,59 @@ class ReviewQueueResponse(BaseModel):
 class AnalyticsResponse(BaseModel):
     scope: str
     data: Dict[str, Any]
+
+
+class PilotSetupRequest(BaseModel):
+    org_id: str
+    name: str = Field(..., min_length=1)
+    treatment_ratio: float = Field(0.5, gt=0.0, lt=1.0)
+    random_seed: int = 42
+    pilot_id: Optional[str] = None
+
+
+class PilotSetupResponse(BaseModel):
+    pilot_id: str
+    org_id: str
+    name: str
+    status: str
+    treatment_ratio: float
+    random_seed: int
+    control_count: int
+    treatment_count: int
+    control_user_ids: List[str]
+    treatment_user_ids: List[str]
+    created_at: float
+
+
+class PilotRunResponse(BaseModel):
+    pilot_id: str
+    org_id: str
+    name: str
+    status: str
+    treatment_ratio: float
+    random_seed: int
+    created_at: float
+    control_count: int
+    treatment_count: int
+    control_user_ids: List[str]
+    treatment_user_ids: List[str]
+    latest_baseline: Optional[Dict[str, Any]] = None
+
+
+class PilotBaselineRequest(BaseModel):
+    pilot_id: str
+    window_days: int = Field(30, ge=1)
+    captured_at: Optional[float] = None
+
+
+class PilotBaselineResponse(BaseModel):
+    baseline_id: int
+    pilot_id: str
+    captured_at: float
+    window_days: int
+    control_metrics: Dict[str, Any]
+    treatment_metrics: Dict[str, Any]
+    overall_metrics: Dict[str, Any]
 
 
 class PilotEvaluateRequest(BaseModel):
@@ -388,6 +442,7 @@ def record_attempt(request: RecordAttemptRequest) -> Dict[str, Any]:
                 concept_id=request.concept_id,
                 correct=request.correct,
                 response_ms=request.response_ms,
+                attempted_at=request.attempted_at,
                 decay_rate=float(state["config"].memory.decay_rate),
                 retrieval_difficulty=float(state["config"].memory.default_difficulty),
             )
@@ -426,6 +481,52 @@ def get_retention_analytics(
             data = store.compute_org_analytics(org_id=org_id, window_days=days)
             return AnalyticsResponse(scope="organization", data=data)
         raise HTTPException(status_code=422, detail="Provide org_id or user_id")
+
+
+@app.post("/pilot/setup", response_model=PilotSetupResponse)
+def setup_pilot(request: PilotSetupRequest) -> PilotSetupResponse:
+    with STATE_LOCK:
+        state = _ensure_state()
+        store: TenantMemoryStore = state["tenant_store"]
+        try:
+            result = store.setup_pilot(
+                org_id=request.org_id,
+                name=request.name,
+                treatment_ratio=float(request.treatment_ratio),
+                random_seed=int(request.random_seed),
+                pilot_id=request.pilot_id,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return PilotSetupResponse(**result)
+
+
+@app.get("/pilot/run", response_model=PilotRunResponse)
+def get_pilot_run(pilot_id: str = Query(...)) -> PilotRunResponse:
+    with STATE_LOCK:
+        state = _ensure_state()
+        store: TenantMemoryStore = state["tenant_store"]
+        try:
+            result = store.get_pilot_run(pilot_id=pilot_id)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return PilotRunResponse(**result)
+
+
+@app.post("/pilot/baseline", response_model=PilotBaselineResponse)
+def capture_pilot_baseline(request: PilotBaselineRequest) -> PilotBaselineResponse:
+    with STATE_LOCK:
+        state = _ensure_state()
+        store: TenantMemoryStore = state["tenant_store"]
+        try:
+            result = store.capture_pilot_baseline(
+                pilot_id=request.pilot_id,
+                window_days=int(request.window_days),
+                captured_at=request.captured_at,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return PilotBaselineResponse(**result)
 
 
 @app.post("/pilot/evaluate", response_model=PilotEvaluateResponse)

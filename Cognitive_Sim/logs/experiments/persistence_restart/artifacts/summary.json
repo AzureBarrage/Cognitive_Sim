@@ -1,0 +1,18 @@
+{
+  "duration_seconds": 0.05167055130004883,
+  "events": {
+    "learn_events": 0,
+    "review_events": 13,
+    "review_selected": 13,
+    "review_attempted": 13,
+    "review_skipped": 0,
+    "review_success": 0,
+    "review_failure": 13,
+    "forgetting_events": 13,
+    "sleep_events": 0
+  },
+  "avg_loss": 0.0,
+  "avg_accuracy": 0.20187695668293879,
+  "avg_entropy": 9.137452125549316,
+  "avg_energy": 36.0
+}
