@@ -1,5 +1,5 @@
 class CognitiveSimError(Exception):
-    """Base exception for the Cognitive Simulation framework."""
+    """Base exception for the Retentia framework."""
     pass
 
 class ConfigurationError(CognitiveSimError):

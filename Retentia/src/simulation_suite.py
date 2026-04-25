@@ -256,7 +256,7 @@ def run_standard_suite(
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Cognitive_Sim experiment and validation suite")
+    parser = argparse.ArgumentParser(description="Retentia experiment and validation suite")
     parser.add_argument(
         "scenario",
         choices=["ab-policy", "repro", "persistence", "all"],

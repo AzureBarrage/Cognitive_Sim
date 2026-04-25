@@ -2,7 +2,7 @@ import logging
 import sys
 from pathlib import Path
 
-def setup_logger(name: str = "cognitive_sim", log_level: str = "INFO", log_file: str = None) -> logging.Logger:
+def setup_logger(name: str = "Retentia", log_level: str = "INFO", log_file: str = None) -> logging.Logger:
     """
     Sets up a logger with the specified name and configuration.
 

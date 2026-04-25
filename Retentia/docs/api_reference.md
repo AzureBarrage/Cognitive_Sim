@@ -1,4 +1,4 @@
-## Cognitive_Sim API Reference
+## Retentia API Reference
 
 Base URL: `http://localhost:8000`
 

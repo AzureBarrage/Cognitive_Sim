@@ -161,7 +161,7 @@ class CognitiveSimulation:
 
 @click.group()
 def cli() -> None:
-    """Cognitive Simulation CLI."""
+    """Retentia CLI."""
 
 
 @cli.command()

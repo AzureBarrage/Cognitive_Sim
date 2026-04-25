@@ -1,6 +1,6 @@
-# Cognitive Simulation (Cognitive_Sim)
+# Retentia (Retentia)
 
-Cognitive_Sim is a biologically-inspired agent simulation with:
+Retentia is a biologically-inspired agent simulation with:
 
 - Ebbinghaus-style memory decay
 - spaced repetition review scheduling
@@ -13,18 +13,18 @@ Cognitive_Sim is a biologically-inspired agent simulation with:
 
 ## Repository Layout
 
-- Core runtime: `Cognitive_Sim/src/`
-- Configs: `Cognitive_Sim/configs/`
-- Tests: `Cognitive_Sim/tests/`
-- Dependency sets: `Cognitive_Sim/requirements/`
-- Changelog: `Cognitive_Sim/CHANGELOG.md`
+- Core runtime: `Retentia/src/`
+- Configs: `Retentia/configs/`
+- Tests: `Retentia/tests/`
+- Dependency sets: `Retentia/requirements/`
+- Changelog: `Retentia/CHANGELOG.md`
 
 ---
 
 ## Local Quickstart
 
 ```bash
-cd Cognitive_Sim
+cd Retentia
 python -m pip install -r requirements/dev.txt
 python -m pytest -q
 ```
@@ -58,7 +58,7 @@ streamlit run src/daily_recall_coach_app.py
 ## Docker Quickstart
 
 ```bash
-cd Cognitive_Sim
+cd Retentia
 docker-compose up --build
 ```
 
@@ -103,7 +103,7 @@ streamlit run src/frontend_app.py
 Launch Daily Recall Coach via package script:
 
 ```bash
-cognitive-sim-daily-recall-ui
+retentia-daily-recall-ui
 ```
 
 Dashboard includes:
@@ -143,7 +143,7 @@ Dashboard includes:
 
 Authentication:
 
-- When `runtime.require_api_key` is true (see [`production.yaml`](Cognitive_Sim/configs/production.yaml:1)), send the key via `x-api-key: <value>` or `Authorization: Bearer <value>`.
+- When `runtime.require_api_key` is true (see [`production.yaml`](Retentia/configs/production.yaml:1)), send the key via `x-api-key: <value>` or `Authorization: Bearer <value>`.
 
 Examples:
 
@@ -253,9 +253,9 @@ curl "http://localhost:8000/pilot/history?org_id=org_acme&limit=20"
 
 Primary environment files:
 
-- `Cognitive_Sim/configs/development.yaml`
-- `Cognitive_Sim/configs/testing.yaml`
-- `Cognitive_Sim/configs/production.yaml`
+- `Retentia/configs/development.yaml`
+- `Retentia/configs/testing.yaml`
+- `Retentia/configs/production.yaml`
 
 Important sections:
 
@@ -302,9 +302,9 @@ This keeps the primary UX as a single round-trip per learner action while preser
 
 Typical outputs after a run:
 
-- Model checkpoint: `Cognitive_Sim/data/network_checkpoint.pt`
-- Memory index + payload blobs: under `Cognitive_Sim/data/`
-- Run metrics JSONL + summary: under `Cognitive_Sim/logs/runs/`
+- Model checkpoint: `Retentia/data/network_checkpoint.pt`
+- Memory index + payload blobs: under `Retentia/data/`
+- Run metrics JSONL + summary: under `Retentia/logs/runs/`
 
 ---
 
@@ -313,7 +313,7 @@ Typical outputs after a run:
 Run all tests:
 
 ```bash
-cd Cognitive_Sim
+cd Retentia
 python -m pytest -q
 ```
 
@@ -330,4 +330,4 @@ Current test suite covers:
 
 ## Change History
 
-See `Cognitive_Sim/CHANGELOG.md` for full details of the latest audit and implementation pass.
+See `Retentia/CHANGELOG.md` for full details of the latest audit and implementation pass.

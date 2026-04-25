@@ -5,7 +5,7 @@ from src.config import MemoryConfig
 
 class EntropyCalculator:
     """
-    Calculates entropy and uncertainty metrics for the cognitive simulation.
+    Calculates entropy and uncertainty metrics for the Retentia.
     Based on Shannon Entropy: H(X) = -Σ P(x) log P(x)
     """
     

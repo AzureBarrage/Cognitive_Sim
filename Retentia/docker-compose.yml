@@ -3,7 +3,7 @@ version: '3.8'
 services:
   cognitive-agent:
     build: .
-    container_name: cognitive_sim
+    container_name: Retentia
     ports:
       - "8000:8000"
     volumes:

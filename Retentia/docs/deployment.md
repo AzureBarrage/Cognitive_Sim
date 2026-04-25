@@ -3,7 +3,7 @@
 ### Local (venv)
 
 ```
-cd Cognitive_Sim
+cd Retentia
 python -m pip install -r requirements/prod.txt
 ENV=production python -m src.api
 ```
@@ -11,7 +11,7 @@ ENV=production python -m src.api
 ### Docker
 
 ```
-cd Cognitive_Sim
+cd Retentia
 docker-compose up --build
 ```
 
@@ -19,9 +19,9 @@ docker-compose up --build
 
 Set `ENV` to pick an environment file:
 
-- `ENV=development` → [`development.yaml`](Cognitive_Sim/configs/development.yaml:1)
-- `ENV=testing` → [`testing.yaml`](Cognitive_Sim/configs/testing.yaml:1)
-- `ENV=production` → [`production.yaml`](Cognitive_Sim/configs/production.yaml:1)
+- `ENV=development` → [`development.yaml`](Retentia/configs/development.yaml:1)
+- `ENV=testing` → [`testing.yaml`](Retentia/configs/testing.yaml:1)
+- `ENV=production` → [`production.yaml`](Retentia/configs/production.yaml:1)
 
 ### API authentication
 

@@ -392,7 +392,7 @@ async def lifespan(app: FastAPI):
             STATE["tenant_store"].close()
 
 
-app = FastAPI(title="Cognitive Simulation API", lifespan=lifespan)
+app = FastAPI(title="Retentia API", lifespan=lifespan)
 
 
 @app.get("/")
