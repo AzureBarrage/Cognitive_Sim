@@ -2,10 +2,14 @@ import httpx
 import pytest
 
 from src.frontend_app import (
+    COMPLIANCE_DEMO_TOPICS,
     ask,
     build_uniform_vector_csv,
+    compliance_risk_distribution,
+    compliance_status,
     create_organization,
     create_user,
+    enrich_queue_for_compliance,
     evaluate_pilot,
     get_analytics,
     get_metrics,
@@ -18,6 +22,7 @@ from src.frontend_app import (
     normalize_base_url,
     parse_float_list,
     record_attempt,
+    risk_level,
     seed_demo_data,
     sleep,
     setup_pilot,
@@ -42,6 +47,32 @@ def test_parse_float_list_validation() -> None:
 
 def test_build_uniform_vector_csv() -> None:
     assert build_uniform_vector_csv(3, value=0.5) == "0.5,0.5,0.5"
+
+
+def test_compliance_demo_topics_and_risk_helpers() -> None:
+    topic_ids = {topic["concept_id"] for topic in COMPLIANCE_DEMO_TOPICS}
+    assert {"hipaa_001", "hipaa_002", "sec_001", "sec_002"}.issubset(topic_ids)
+    assert risk_level(0.8) == "🔴 High Risk"
+    assert risk_level(0.5) == "🟡 Medium Risk"
+    assert risk_level(0.1) == "🟢 Low Risk"
+    assert compliance_status(0.9) == "✅ Stable"
+    assert compliance_status(0.7) == "⚠️ At Risk"
+    assert compliance_status(0.9, high_risk_count=1) == "🔴 Critical"
+
+    queue = enrich_queue_for_compliance(
+        [
+            {
+                "concept_id": "hipaa_001",
+                "risk_score": 0.75,
+                "retention": 0.25,
+                "concept": {"title": "Protected Health Information (PHI)"},
+                "reason": "Retention has fallen below target.",
+            }
+        ]
+    )
+    assert queue[0]["compliance_topic"] == "Protected Health Information (PHI)"
+    assert queue[0]["risk_level"] == "🔴 High Risk"
+    assert compliance_risk_distribution(queue) == {"high": 1, "medium": 0, "low": 0}
 
 
 def test_get_status_and_metrics_requests() -> None:
@@ -186,6 +217,8 @@ def test_seed_demo_data_flow() -> None:
             return httpx.Response(200, json={"user_id": "usr_demo", "org_id": "org_demo", "email": "demo@example.com", "name": None, "created_at": 1.0})
         if request.url.path == "/record-attempt":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/concepts":
+            return httpx.Response(200, json={"ok": True})
         if request.url.path == "/sleep":
             return httpx.Response(200, json={"status": "slept"})
         if request.url.path == "/review-queue":
@@ -201,6 +234,7 @@ def test_seed_demo_data_flow() -> None:
 
     original_create_org = frontend_app.create_organization
     original_create_user = frontend_app.create_user
+    original_upsert_concept = frontend_app.upsert_concept
     original_record_attempt = frontend_app.record_attempt
     original_sleep = frontend_app.sleep
     original_queue = frontend_app.get_review_queue
@@ -208,6 +242,7 @@ def test_seed_demo_data_flow() -> None:
 
     frontend_app.create_organization = lambda *a, **k: original_create_org(*a, transport=transport, **k)
     frontend_app.create_user = lambda *a, **k: original_create_user(*a, transport=transport, **k)
+    frontend_app.upsert_concept = lambda *a, **k: original_upsert_concept(*a, transport=transport, **k)
     frontend_app.record_attempt = lambda *a, **k: original_record_attempt(*a, transport=transport, **k)
     frontend_app.sleep = lambda *a, **k: original_sleep(*a, transport=transport, **k)
     frontend_app.get_review_queue = lambda *a, **k: original_queue(*a, transport=transport, **k)
@@ -225,11 +260,13 @@ def test_seed_demo_data_flow() -> None:
     finally:
         frontend_app.create_organization = original_create_org
         frontend_app.create_user = original_create_user
+        frontend_app.upsert_concept = original_upsert_concept
         frontend_app.record_attempt = original_record_attempt
         frontend_app.sleep = original_sleep
         frontend_app.get_review_queue = original_queue
         frontend_app.get_analytics = original_analytics
 
     assert result["attempts_seeded"] == 20
+    assert called_paths.count("/concepts") == 20
     assert called_paths.count("/record-attempt") == 20
 

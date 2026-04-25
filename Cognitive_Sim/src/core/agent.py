@@ -47,7 +47,7 @@ class CognitiveAgent:
             energy=float(self.energy),
             max_energy=float(self.max_energy),
             due_count=int(self.memory.get_due_review_count(limit=self.config.review_due_limit)),
-            entropy=float(self.network.calculate_uncertainty()),
+            entropy=float(self.network.get_uncertainty()),
             memory_count=len(self.memory.memories),
         )
 
@@ -73,7 +73,12 @@ class CognitiveAgent:
             return {"status": "failed", "reason": "low_energy"}
 
         self.energy -= float(self.config.energy_cost_learn)
-        train_result = self.network.train_step(input_data, target, self.optimizer.optimizer)
+        train_result = self.network.train_step(
+            input_data,
+            target,
+            self.optimizer,
+            memory_stability=self.memory.get_average_stability(),
+        )
 
         if memory_id is None:
             loss_value = int(train_result["loss"] * 10000)
@@ -103,7 +108,9 @@ class CognitiveAgent:
 
     def review(self) -> Dict[str, Any]:
         context = self._build_policy_context()
-        due_ids = self.memory.get_at_risk_memories(limit=self.config.review_due_limit)
+        due_ids = self.memory.get_due_memory_ids(limit=self.config.review_due_limit)
+        if not due_ids:
+            due_ids = self.memory.get_at_risk_memories(limit=self.config.review_due_limit)
         if not due_ids:
             self._apply_reward(context, "review", -0.1)
             return {"status": "skipped", "reason": "nothing_to_review"}
@@ -127,7 +134,13 @@ class CognitiveAgent:
 
         input_data = payload["input"]
         target = payload["target"]
-        train_result = self.network.train_step(input_data, target, self.optimizer.optimizer)
+        review_stability = float(self.memory.memories[memory_id].stability)
+        train_result = self.network.train_step(
+            input_data,
+            target,
+            self.optimizer,
+            memory_stability=review_stability,
+        )
         self.memory.review_memory(memory_id, success=True)
 
         self.review_successes += 1
@@ -141,6 +154,7 @@ class CognitiveAgent:
             "memory_id": memory_id,
             "loss": train_result["loss"],
             "uncertainty": train_result["uncertainty"],
+            "accuracy": train_result.get("accuracy", 0.0),
             "current_energy": self.energy,
         }
 

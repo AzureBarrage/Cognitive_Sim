@@ -20,6 +20,7 @@ class MemoryConfig(BaseModel):
     # Persistence
     store_dir: str = Field(default="data/memory_store")
     index_path: str = Field(default="data/memory_index.json")
+    payload_save_limit: int = Field(default=0, ge=0)
     eager_load: bool = Field(default=False)
 
 class NetworkConfig(BaseModel):
@@ -76,8 +77,12 @@ class RuntimeConfig(BaseModel):
     artifact_dir: str = Field(default="logs/runs")
     simulated_step_seconds: float = Field(default=0.0, ge=0.0)
     dev_reset_enabled: bool = Field(default=True)
+    require_api_key: bool = Field(default=False)
+    api_key: Optional[str] = Field(default=None)
     tenant_db_path: str = Field(default="data/tenant_memory.db")
     analytics_window_days: int = Field(default=30, ge=1)
+    metrics_flush_every: int = Field(default=20, ge=1)
+    metrics_flush_interval_seconds: float = Field(default=1.0, ge=0.0)
     pilot_min_retained_mastery_lift: float = Field(default=0.05)
     pilot_min_forgetting_velocity_reduction: float = Field(default=0.10)
     pilot_min_review_efficiency_lift: float = Field(default=0.05)

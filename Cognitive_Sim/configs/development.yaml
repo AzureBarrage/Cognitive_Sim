@@ -10,6 +10,7 @@ memory:
   relearn_penalty_factor: 1.5
   store_dir: "data/memory_store"
   index_path: "data/memory_index.json"
+  payload_save_limit: 0
   eager_load: false
 
 network:
@@ -56,6 +57,10 @@ runtime:
   dev_reset_enabled: true
   tenant_db_path: "data/tenant_memory.db"
   analytics_window_days: 30
+  metrics_flush_every: 20
+  metrics_flush_interval_seconds: 1.0
+  require_api_key: false
+  api_key: null
   pilot_min_retained_mastery_lift: 0.05
   pilot_min_forgetting_velocity_reduction: 0.10
   pilot_min_review_efficiency_lift: 0.05

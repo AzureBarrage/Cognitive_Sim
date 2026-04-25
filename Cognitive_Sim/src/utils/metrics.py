@@ -9,7 +9,7 @@ import numpy as np
 class MetricsTracker:
     """Tracks counters/time-series and exports JSONL artifacts."""
 
-    def __init__(self, artifact_dir: str = "logs/runs"):
+    def __init__(self, artifact_dir: str = "logs/runs", flush_every: int = 20, flush_interval_seconds: float = 1.0):
         self.start_time = time.time()
         self.metrics: Dict[str, List[Dict[str, Any]]] = {
             "training": [],
@@ -26,12 +26,18 @@ class MetricsTracker:
             "review_failure": 0,
             "forgetting_events": 0,
             "sleep_events": 0,
+            "daily_sessions": 0,
+            "daily_session_attempts_recorded": 0,
         }
 
         self.artifact_dir = Path(artifact_dir)
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         run_id = str(int(self.start_time))
         self.jsonl_path = self.artifact_dir / ("run_" + run_id + ".jsonl")
+        self.flush_every = max(1, int(flush_every))
+        self.flush_interval_seconds = max(0.0, float(flush_interval_seconds))
+        self._pending_rows: List[Dict[str, Any]] = []
+        self._last_flush_time = time.time()
 
     def _timestamp(self) -> float:
         return float(time.time() - self.start_time)
@@ -39,8 +45,28 @@ class MetricsTracker:
     def _append(self, category: str, payload: Dict[str, Any]) -> None:
         row = {"category": category, "timestamp": self._timestamp(), **payload}
         self.metrics.setdefault(category, []).append(row)
+        self._pending_rows.append(row)
+        self._maybe_flush()
+
+    def _maybe_flush(self) -> None:
+        if not self._pending_rows:
+            return
+        should_flush = len(self._pending_rows) >= self.flush_every
+        if not should_flush and self.flush_interval_seconds > 0:
+            elapsed = time.time() - self._last_flush_time
+            should_flush = elapsed >= self.flush_interval_seconds
+        if not should_flush:
+            return
+        self.flush()
+
+    def flush(self) -> None:
+        if not self._pending_rows:
+            return
         with open(self.jsonl_path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row) + "\n")
+            for row in self._pending_rows:
+                handle.write(json.dumps(row) + "\n")
+        self._pending_rows.clear()
+        self._last_flush_time = time.time()
 
     def log_training_step(self, step: int, loss: float, entropy: float, accuracy: float, energy: float) -> None:
         self._append(
@@ -96,6 +122,7 @@ class MetricsTracker:
         return history[-1] if history else {}
 
     def summarize(self) -> Dict[str, Any]:
+        self.flush()
         training = self.metrics.get("training", [])
         losses = [row["loss"] for row in training if "loss" in row]
         accuracy = [row["accuracy"] for row in training if "accuracy" in row]
@@ -116,6 +143,7 @@ class MetricsTracker:
         return summary
 
     def trends(self, window: int = 20) -> Dict[str, float]:
+        self.flush()
         training = self.metrics.get("training", [])
         if not training:
             return {"loss": 0.0, "accuracy": 0.0, "entropy": 0.0, "energy": 0.0}

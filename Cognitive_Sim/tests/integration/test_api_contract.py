@@ -70,6 +70,27 @@ def test_multitenant_endpoints_contract() -> None:
         )
         assert create_user.status_code == 200
 
+        concept = client.put(
+            "/concepts",
+            json={
+                "org_id": org_id,
+                "concept_id": "concept_1",
+                "title": "Support concept 1",
+                "prompt": "What should support do?",
+                "answer": "Follow the playbook.",
+                "explanation": "This is the approved process.",
+                "tags": ["support", "demo"],
+                "difficulty": 1.0,
+                "source": "api_contract",
+            },
+        )
+        assert concept.status_code == 200
+        assert concept.json()["title"] == "Support concept 1"
+
+        concepts = client.get(f"/concepts?org_id={org_id}&limit=10")
+        assert concepts.status_code == 200
+        assert concepts.json()["count"] >= 1
+
         attempt = client.post(
             "/record-attempt",
             json={
@@ -86,6 +107,8 @@ def test_multitenant_endpoints_contract() -> None:
         queue = client.get(f"/review-queue?user_id={user_id}&limit=10")
         assert queue.status_code == 200
         assert queue.json()["user_id"] == user_id
+        assert queue.json()["items"][0]["concept"]["title"] == "Support concept 1"
+        assert "reason_code" in queue.json()["items"][0]
 
         user_analytics = client.get(f"/analytics?user_id={user_id}")
         assert user_analytics.status_code == 200
@@ -94,6 +117,60 @@ def test_multitenant_endpoints_contract() -> None:
         org_analytics = client.get(f"/analytics?org_id={org_id}")
         assert org_analytics.status_code == 200
         assert org_analytics.json()["scope"] == "organization"
+
+        roi = client.post(
+            "/roi/report",
+            json={
+                "org_id": org_id,
+                "learners": 1000,
+                "training_hours_saved_per_learner": 2.0,
+                "cost_per_training_hour": 50.0,
+                "annual_contract_value": 25000.0,
+                "window_days": 30,
+            },
+        )
+        assert roi.status_code == 200
+        assert roi.json()["roi_multiple"] == 4.0
+
+        audit_log = client.get(f"/audit-log?org_id={org_id}&limit=20")
+        assert audit_log.status_code == 200
+        actions = {item["action"] for item in audit_log.json()["items"]}
+        assert "concept_upserted" in actions
+        assert "attempt_recorded" in actions
+
+        queue_csv = client.get(f"/exports/review-queue.csv?user_id={user_id}&limit=10")
+        assert queue_csv.status_code == 200
+        assert "concept_title" in queue_csv.text
+        assert "Support concept 1" in queue_csv.text
+
+        analytics_csv = client.get(f"/exports/analytics.csv?org_id={org_id}")
+        assert analytics_csv.status_code == 200
+        assert "retention_percentage" in analytics_csv.text
+
+
+def test_multitenant_validation_contracts() -> None:
+    with TestClient(app) as client:
+        create_user = client.post(
+            "/users",
+            json={
+                "org_id": "org_missing_contract",
+                "email": "qa-missing@example.com",
+                "user_id": "usr_missing_contract",
+            },
+        )
+        assert create_user.status_code == 400
+        assert create_user.json()["detail"] == "organization_not_found"
+
+        attempt = client.post(
+            "/record-attempt",
+            json={
+                "user_id": "usr_missing_contract",
+                "concept_id": "concept_missing",
+                "correct": True,
+            },
+        )
+        assert attempt.status_code == 400
+        assert attempt.json()["detail"] == "user_not_found"
 
 
 def test_pilot_gate_endpoints_contract() -> None:
@@ -195,3 +272,58 @@ def test_pilot_setup_and_baseline_contract() -> None:
         run_after = client.get(f"/pilot/run?pilot_id={pilot_id}")
         assert run_after.status_code == 200
         assert run_after.json()["latest_baseline"] is not None
+
+
+def test_daily_session_endpoint_contract() -> None:
+    org_id = "org_daily_" + uuid.uuid4().hex[:8]
+    user_id = "usr_daily_" + uuid.uuid4().hex[:8]
+
+    with TestClient(app) as client:
+        create_org = client.post("/organizations", json={"name": "Daily Org", "org_id": org_id})
+        assert create_org.status_code == 200
+
+        create_user = client.post(
+            "/users",
+            json={
+                "org_id": org_id,
+                "email": "daily@example.com",
+                "user_id": user_id,
+            },
+        )
+        assert create_user.status_code == 200
+
+        initial_session = client.post(
+            "/daily-session",
+            json={
+                "user_id": user_id,
+                "limit": 10,
+                "window_days": 30,
+            },
+        )
+        assert initial_session.status_code == 200
+        initial_payload = initial_session.json()
+        assert initial_payload["user_id"] == user_id
+        assert "queue" in initial_payload
+        assert "analytics" in initial_payload
+        assert initial_payload["recorded_attempt"] is None
+        assert initial_payload["recommended_action"] in {"review_due_items", "build_consistency", "seed_attempts"}
+
+        session_with_attempt = client.post(
+            "/daily-session",
+            json={
+                "user_id": user_id,
+                "limit": 10,
+                "attempt": {
+                    "concept_id": "daily_concept_001",
+                    "correct": True,
+                    "response_ms": 760.0,
+                },
+            },
+        )
+        assert session_with_attempt.status_code == 200
+        attempted_payload = session_with_attempt.json()
+        assert attempted_payload["recorded_attempt"]["concept_id"] == "daily_concept_001"
+        assert attempted_payload["recorded_attempt"]["correct"] is True
+        assert attempted_payload["total_count"] >= 1
+        assert "reason_code" in attempted_payload["queue"][0]
+

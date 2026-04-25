@@ -31,7 +31,8 @@ class CognitiveNetwork(nn.Module):
         self.plasticity = nn.Parameter(torch.ones(self.hidden_size))
 
         self._uncertainty_cache: float = 0.0
-        self._uncertainty_step: int = 0
+        self._uncertainty_dirty: bool = True
+        self._uncertainty_updates_since_refresh: int = self.uncertainty_update_interval
 
     @staticmethod
     def resolve_device(device_name: str) -> torch.device:
@@ -48,7 +49,31 @@ class CognitiveNetwork(nn.Module):
 
     def calculate_uncertainty(self) -> float:
         flat_weights = np.concatenate([w.reshape(-1) for w in self.get_layer_weights()], axis=0)
-        return EntropyCalculator.calculate_weight_entropy(flat_weights)
+        uncertainty = float(EntropyCalculator.calculate_weight_entropy(flat_weights))
+        self._uncertainty_cache = uncertainty
+        self._uncertainty_dirty = False
+        self._uncertainty_updates_since_refresh = 0
+        return uncertainty
+
+    def mark_uncertainty_dirty(self) -> None:
+        self._uncertainty_dirty = True
+        self._uncertainty_updates_since_refresh += 1
+
+    def get_uncertainty(self, force: bool = False) -> float:
+        should_refresh = force or (
+            self._uncertainty_dirty
+            and self._uncertainty_updates_since_refresh >= self.uncertainty_update_interval
+        )
+        if should_refresh:
+            return self.calculate_uncertainty()
+        return float(self._uncertainty_cache)
+
+    @staticmethod
+    def _step_optimizer(optimizer: Any, system_entropy: float, memory_stability: float) -> None:
+        try:
+            optimizer.step(system_entropy=system_entropy, memory_stability=memory_stability)
+        except TypeError:
+            optimizer.step()
 
     def _compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.loss_type == "mse":
@@ -62,11 +87,7 @@ class CognitiveNetwork(nn.Module):
         x: torch.Tensor,
         memory_context: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        self._uncertainty_step += 1
-        if self._uncertainty_step % self.uncertainty_update_interval == 0:
-            self._uncertainty_cache = self.calculate_uncertainty()
-
-        uncertainty = float(self._uncertainty_cache)
+        uncertainty = self.get_uncertainty()
         meta_state = {
             "uncertainty": uncertainty,
             "high_uncertainty": uncertainty > self.entropy_threshold,
@@ -91,8 +112,9 @@ class CognitiveNetwork(nn.Module):
         self,
         inputs: torch.Tensor,
         targets: torch.Tensor,
-        optimizer: torch.optim.Optimizer,
+        optimizer: Any,
         memory_context: Optional[torch.Tensor] = None,
+        memory_stability: float = 1.0,
     ) -> Dict[str, float]:
         self.train()
         optimizer.zero_grad()
@@ -100,13 +122,20 @@ class CognitiveNetwork(nn.Module):
         loss = self._compute_loss(output, targets)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.gradient_clip_norm)
-        optimizer.step()
+        self._step_optimizer(
+            optimizer,
+            system_entropy=float(meta["uncertainty"]),
+            memory_stability=float(memory_stability),
+        )
+        self.mark_uncertainty_dirty()
         with torch.no_grad():
             mae = torch.mean(torch.abs(output - targets)).item()
+            accuracy = max(0.0, 1.0 - mae)
         return {
             "loss": float(loss.item()),
-            "uncertainty": float(meta["uncertainty"]),
+            "uncertainty": float(self.get_uncertainty()),
             "mae": float(mae),
+            "accuracy": float(accuracy),
         }
 
     def eval_step(
@@ -120,10 +149,12 @@ class CognitiveNetwork(nn.Module):
             output, meta = self.forward(inputs, memory_context=memory_context)
             loss = self._compute_loss(output, targets)
             mae = torch.mean(torch.abs(output - targets)).item()
+            accuracy = max(0.0, 1.0 - mae)
         return {
             "loss": float(loss.item()),
             "uncertainty": float(meta["uncertainty"]),
             "mae": float(mae),
+            "accuracy": float(accuracy),
         }
 
     def update_plasticity(self, error_signal: float) -> None:
@@ -147,8 +178,12 @@ class CognitiveNetwork(nn.Module):
         payload = torch.load(checkpoint_path, map_location="cpu")
         if isinstance(payload, dict) and "model_state" in payload:
             self.load_state_dict(payload["model_state"])
+            self.mark_uncertainty_dirty()
+            self._uncertainty_updates_since_refresh = self.uncertainty_update_interval
             return payload
         self.load_state_dict(payload)
+        self.mark_uncertainty_dirty()
+        self._uncertainty_updates_since_refresh = self.uncertainty_update_interval
         return {"model_state": payload}
 
     def save_weights(self, path: str) -> None:
@@ -160,3 +195,5 @@ class CognitiveNetwork(nn.Module):
         checkpoint_path = Path(path)
         if checkpoint_path.exists():
             self.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+            self.mark_uncertainty_dirty()
+            self._uncertainty_updates_since_refresh = self.uncertainty_update_interval

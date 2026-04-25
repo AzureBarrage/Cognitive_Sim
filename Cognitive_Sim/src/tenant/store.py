@@ -18,6 +18,7 @@ class TenantMemoryStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -45,6 +46,28 @@ class TenantMemoryStore:
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS concepts (
+                    id TEXT NOT NULL,
+                    org_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    explanation TEXT,
+                    tags TEXT NOT NULL,
+                    difficulty REAL NOT NULL,
+                    source TEXT,
+                    version INTEGER NOT NULL,
+                    active INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(org_id, id),
+                    FOREIGN KEY(org_id) REFERENCES organizations(id)
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_concepts_org_active ON concepts(org_id, active, updated_at)")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_memory_state (
@@ -82,6 +105,25 @@ class TenantMemoryStore:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempt_user_time ON attempt_events(user_id, attempted_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_attempt_org_user ON users(org_id, id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_mem_user_next ON user_memory_state(user_id, next_review_at)")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    org_id TEXT,
+                    user_id TEXT,
+                    action TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT,
+                    metadata TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    FOREIGN KEY(org_id) REFERENCES organizations(id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_org_time ON audit_events(org_id, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_events(user_id, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_action_time ON audit_events(action, created_at)")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS pilot_evaluations (
@@ -164,26 +206,271 @@ class TenantMemoryStore:
         exponent = max(-700.0, min(700.0, exponent))
         return max(0.0, min(1.0, float(strength) * math.exp(exponent)))
 
+    def _org_exists(self, org_id: str) -> bool:
+        row = self._conn.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
+        return row is not None
+
+    def _user_exists(self, user_id: str) -> bool:
+        row = self._conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row is not None
+
+    def _user_org_id(self, user_id: str) -> Optional[str]:
+        row = self._conn.execute("SELECT org_id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            return None
+        return str(row["org_id"])
+
+    @staticmethod
+    def _decode_json_list(raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        try:
+            value = json.loads(str(raw))
+            if isinstance(value, list):
+                return [str(item) for item in value]
+        except Exception:
+            return []
+        return []
+
+    @staticmethod
+    def _concept_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "concept_id": str(row["id"]),
+            "org_id": str(row["org_id"]),
+            "title": str(row["title"]),
+            "prompt": str(row["prompt"]),
+            "answer": str(row["answer"]),
+            "explanation": row["explanation"],
+            "tags": TenantMemoryStore._decode_json_list(row["tags"]),
+            "difficulty": float(row["difficulty"]),
+            "source": row["source"],
+            "version": int(row["version"]),
+            "active": bool(row["active"]),
+            "created_at": float(row["created_at"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
+    @staticmethod
+    def _audit_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        try:
+            metadata = json.loads(str(row["metadata"] or "{}"))
+        except Exception:
+            metadata = {}
+        return {
+            "id": int(row["id"]),
+            "org_id": row["org_id"],
+            "user_id": row["user_id"],
+            "action": str(row["action"]),
+            "entity_type": str(row["entity_type"]),
+            "entity_id": row["entity_id"],
+            "metadata": metadata,
+            "created_at": float(row["created_at"]),
+        }
+
+    def log_audit_event(
+        self,
+        action: str,
+        entity_type: str,
+        entity_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        created_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        now = float(time.time() if created_at is None else created_at)
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO audit_events(org_id, user_id, action, entity_type, entity_id, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    org_id,
+                    user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    json.dumps(metadata or {}, sort_keys=True),
+                    now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute("SELECT * FROM audit_events WHERE id = ?", (int(cursor.lastrowid),)).fetchone()
+        return self._audit_row_to_dict(row)
+
+    def list_audit_events(
+        self,
+        org_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        action: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM audit_events"
+        clauses: List[str] = []
+        params: List[Any] = []
+        if org_id:
+            clauses.append("org_id = ?")
+            params.append(org_id)
+        if user_id:
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        if action:
+            clauses.append("action = ?")
+            params.append(action)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(int(limit))
+
+        with self._lock:
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+        return [self._audit_row_to_dict(row) for row in rows]
+
+    def upsert_concept(
+        self,
+        org_id: str,
+        concept_id: str,
+        title: str,
+        prompt: str,
+        answer: str,
+        explanation: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        difficulty: float = 1.0,
+        source: Optional[str] = None,
+        active: bool = True,
+    ) -> Dict[str, Any]:
+        if not concept_id.strip():
+            raise ValueError("concept_id_required")
+        now = time.time()
+        clean_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
+        with self._lock:
+            if not self._org_exists(org_id):
+                raise ValueError("organization_not_found")
+            existing = self._conn.execute(
+                "SELECT * FROM concepts WHERE org_id = ? AND id = ?",
+                (org_id, concept_id),
+            ).fetchone()
+            version = int(existing["version"] + 1) if existing is not None else 1
+            created_at = float(existing["created_at"]) if existing is not None else now
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO concepts(
+                    id, org_id, title, prompt, answer, explanation, tags, difficulty,
+                    source, version, active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    concept_id,
+                    org_id,
+                    title,
+                    prompt,
+                    answer,
+                    explanation,
+                    json.dumps(clean_tags),
+                    float(difficulty),
+                    source,
+                    int(version),
+                    1 if active else 0,
+                    created_at,
+                    now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM concepts WHERE org_id = ? AND id = ?",
+                (org_id, concept_id),
+            ).fetchone()
+        concept = self._concept_row_to_dict(row)
+        self.log_audit_event(
+            action="concept_upserted",
+            entity_type="concept",
+            entity_id=concept_id,
+            org_id=org_id,
+            metadata={"version": concept["version"], "active": concept["active"], "tags": concept["tags"]},
+        )
+        return concept
+
+    def get_concept(self, org_id: str, concept_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM concepts WHERE org_id = ? AND id = ?",
+                (org_id, concept_id),
+            ).fetchone()
+        return self._concept_row_to_dict(row) if row is not None else None
+
+    def list_concepts(self, org_id: str, active: Optional[bool] = True, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM concepts WHERE org_id = ?"
+        params: List[Any] = [org_id]
+        if active is not None:
+            query += " AND active = ?"
+            params.append(1 if active else 0)
+        query += " ORDER BY updated_at DESC, id ASC LIMIT ? OFFSET ?"
+        params.extend([int(limit), int(offset)])
+
+        with self._lock:
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+        return [self._concept_row_to_dict(row) for row in rows]
+
+    def _concepts_for_user(self, user_id: str, concept_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not concept_ids:
+            return {}
+        org_id = self._user_org_id(user_id)
+        if org_id is None:
+            return {}
+        placeholders = ",".join(["?"] * len(concept_ids))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM concepts WHERE org_id = ? AND id IN ({placeholders})",
+                tuple([org_id] + concept_ids),
+            ).fetchall()
+        return {str(row["id"]): self._concept_row_to_dict(row) for row in rows}
+
     def create_org(self, name: str, org_id: Optional[str] = None) -> Dict[str, Any]:
         now = time.time()
         oid = org_id or ("org_" + uuid.uuid4().hex[:16])
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO organizations(id, name, created_at) VALUES (?, ?, ?)",
-                (oid, name, now),
-            )
+            if self._org_exists(oid):
+                raise ValueError("organization_already_exists")
+            self._conn.execute("INSERT INTO organizations(id, name, created_at) VALUES (?, ?, ?)", (oid, name, now))
             self._conn.commit()
+        self.log_audit_event(
+            action="organization_created",
+            entity_type="organization",
+            entity_id=oid,
+            org_id=oid,
+            metadata={"name": name},
+            created_at=now,
+        )
         return {"org_id": oid, "name": name, "created_at": now}
 
     def create_user(self, org_id: str, email: str, name: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         now = time.time()
         uid = user_id or ("usr_" + uuid.uuid4().hex[:16])
         with self._lock:
+            if not self._org_exists(org_id):
+                raise ValueError("organization_not_found")
+            if self._user_exists(uid):
+                raise ValueError("user_already_exists")
+            existing_email = self._conn.execute(
+                "SELECT 1 FROM users WHERE org_id = ? AND email = ?",
+                (org_id, email),
+            ).fetchone()
+            if existing_email is not None:
+                raise ValueError("user_email_already_exists")
             self._conn.execute(
                 "INSERT INTO users(id, org_id, email, name, created_at) VALUES (?, ?, ?, ?, ?)",
                 (uid, org_id, email, name, now),
             )
             self._conn.commit()
+        self.log_audit_event(
+            action="user_created",
+            entity_type="user",
+            entity_id=uid,
+            org_id=org_id,
+            user_id=uid,
+            metadata={"email": email, "name": name},
+            created_at=now,
+        )
         return {"user_id": uid, "org_id": org_id, "email": email, "name": name, "created_at": now}
 
     def _get_state(self, user_id: str, concept_id: str) -> Optional[sqlite3.Row]:
@@ -204,8 +491,12 @@ class TenantMemoryStore:
         attempted_at: Optional[float] = None,
     ) -> Dict[str, Any]:
         now = float(time.time() if attempted_at is None else attempted_at)
+        audit_org_id: Optional[str] = None
 
         with self._lock:
+            if not self._user_exists(user_id):
+                raise ValueError("user_not_found")
+            audit_org_id = self._user_org_id(user_id)
             self._conn.execute(
                 "INSERT INTO attempt_events(user_id, concept_id, correct, response_ms, attempted_at) VALUES (?, ?, ?, ?, ?)",
                 (user_id, concept_id, 1 if correct else 0, response_ms, now),
@@ -284,7 +575,7 @@ class TenantMemoryStore:
             risk = 1.0 - self._safe_retention(strength, stability, decay_rate, 0.0)
             risk = min(1.0, risk + (0.2 if forgotten else 0.0))
 
-            return {
+            result = {
                 "user_id": user_id,
                 "concept_id": concept_id,
                 "correct": bool(correct),
@@ -299,6 +590,23 @@ class TenantMemoryStore:
                 "forgotten": bool(forgotten),
                 "risk_score": float(risk),
             }
+
+        self.log_audit_event(
+            action="attempt_recorded",
+            entity_type="attempt",
+            entity_id=concept_id,
+            org_id=audit_org_id,
+            user_id=user_id,
+            metadata={
+                "concept_id": concept_id,
+                "correct": bool(correct),
+                "response_ms": response_ms,
+                "attempts": attempts,
+                "risk_score": float(risk),
+            },
+            created_at=now,
+        )
+        return result
 
     def get_review_queue(self, user_id: str, limit: int = 50, now: Optional[float] = None) -> List[Dict[str, Any]]:
         reference_time = float(time.time() if now is None else now)
@@ -323,19 +631,43 @@ class TenantMemoryStore:
                 elapsed,
             )
             risk = min(1.0, (1.0 - retention) + (0.2 if int(row["forgotten"]) else 0.0))
+            is_due = float(row["next_review_at"]) <= reference_time
+            if is_due:
+                reason_code = "review_due"
+            elif int(row["forgotten"]):
+                reason_code = "prior_miss_reinforcement"
+            elif retention < 0.6:
+                reason_code = "retention_risk"
+            else:
+                reason_code = "scheduled_reinforcement"
             queue.append(
                 {
                     "concept_id": row["concept_id"],
                     "next_review_at": float(row["next_review_at"]),
-                    "is_due": float(row["next_review_at"]) <= reference_time,
+                    "is_due": is_due,
                     "retention": float(retention),
                     "risk_score": float(risk),
                     "strength": float(row["strength"]),
                     "stability": float(row["stability"]),
+                    "reason_code": reason_code,
+                    "reason": self._review_reason(reason_code, retention, risk),
                 }
             )
         queue.sort(key=lambda item: ((not item["is_due"]), -item["risk_score"], item["next_review_at"]))
+        concepts = self._concepts_for_user(user_id, [str(item["concept_id"]) for item in queue])
+        for item in queue:
+            item["concept"] = concepts.get(str(item["concept_id"]))
         return queue
+
+    @staticmethod
+    def _review_reason(reason_code: str, retention: float, risk: float) -> str:
+        if reason_code == "review_due":
+            return "This concept is due now based on its spaced-review interval."
+        if reason_code == "prior_miss_reinforcement":
+            return "This concept was previously missed and should be reinforced."
+        if reason_code == "retention_risk":
+            return f"Estimated retention is below the target range ({retention:.0%})."
+        return f"Scheduled reinforcement keeps the risk score controlled ({risk:.0%})."
 
     def _user_ids_for_org(self, org_id: str) -> List[str]:
         with self._lock:
@@ -366,6 +698,21 @@ class TenantMemoryStore:
             "review_efficiency_score": float(sum(float(m.get("review_efficiency_score", 0.0)) for m in metrics) / count),
             "avg_concept_half_life_hours": float(sum(float(m.get("avg_concept_half_life_hours", 0.0)) for m in metrics) / count),
             "at_risk_concepts": int(sum(int(m.get("at_risk_concepts", 0)) for m in metrics)),
+        }
+
+    def _compute_user_metrics_map(
+        self,
+        user_ids: List[str],
+        window_days: int,
+        reference_time: float,
+    ) -> Dict[str, Dict[str, Any]]:
+        return {
+            user_id: self._compute_user_analytics_at(
+                user_id=user_id,
+                window_days=window_days,
+                reference_time=reference_time,
+            )
+            for user_id in user_ids
         }
 
     def setup_pilot(
@@ -417,8 +764,22 @@ class TenantMemoryStore:
                 self._conn.execute(
                     "INSERT INTO pilot_cohort_assignments(pilot_id, user_id, cohort, assigned_at) VALUES (?, ?, ?, ?)",
                     (pid, uid, "treatment", now),
-                )
+            )
             self._conn.commit()
+
+        self.log_audit_event(
+            action="pilot_configured",
+            entity_type="pilot_run",
+            entity_id=pid,
+            org_id=org_id,
+            metadata={
+                "name": name,
+                "treatment_ratio": ratio,
+                "control_count": len(control_users),
+                "treatment_count": len(treatment_users),
+            },
+            created_at=now,
+        )
 
         return {
             "pilot_id": pid,
@@ -496,15 +857,15 @@ class TenantMemoryStore:
         if not control_users or not treatment_users:
             raise ValueError("pilot_requires_control_and_treatment_users")
 
-        control_metrics = self._aggregate_user_metrics(
-            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in control_users]
+        all_user_ids = list(dict.fromkeys(control_users + treatment_users))
+        metrics_by_user = self._compute_user_metrics_map(
+            user_ids=all_user_ids,
+            window_days=days,
+            reference_time=reference_time,
         )
-        treatment_metrics = self._aggregate_user_metrics(
-            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in treatment_users]
-        )
-        overall_metrics = self._aggregate_user_metrics(
-            [self._compute_user_analytics_at(user_id=uid, window_days=days, reference_time=reference_time) for uid in (control_users + treatment_users)]
-        )
+        control_metrics = self._aggregate_user_metrics([metrics_by_user[uid] for uid in control_users])
+        treatment_metrics = self._aggregate_user_metrics([metrics_by_user[uid] for uid in treatment_users])
+        overall_metrics = self._aggregate_user_metrics([metrics_by_user[uid] for uid in all_user_ids])
 
         with self._lock:
             cursor = self._conn.execute(
@@ -527,6 +888,20 @@ class TenantMemoryStore:
             )
             self._conn.commit()
             baseline_id = int(cursor.lastrowid)
+
+        self.log_audit_event(
+            action="pilot_baseline_captured",
+            entity_type="pilot_baseline",
+            entity_id=str(baseline_id),
+            org_id=str(run["org_id"]),
+            metadata={
+                "pilot_id": pilot_id,
+                "window_days": days,
+                "control_users": len(control_users),
+                "treatment_users": len(treatment_users),
+            },
+            created_at=reference_time,
+        )
 
         return {
             "baseline_id": baseline_id,
@@ -620,8 +995,13 @@ class TenantMemoryStore:
                 "at_risk_concepts": 0,
             }
 
-        metrics = [self.compute_user_analytics(user_id=uid, window_days=window_days) for uid in user_ids]
-        aggregated = self._aggregate_user_metrics(metrics)
+        reference_time = time.time()
+        metrics_by_user = self._compute_user_metrics_map(
+            user_ids=user_ids,
+            window_days=window_days,
+            reference_time=reference_time,
+        )
+        aggregated = self._aggregate_user_metrics(list(metrics_by_user.values()))
         return {
             "org_id": org_id,
             "users": int(aggregated["users"]),
@@ -632,6 +1012,60 @@ class TenantMemoryStore:
             "avg_concept_half_life_hours": float(aggregated["avg_concept_half_life_hours"]),
             "at_risk_concepts": int(aggregated["at_risk_concepts"]),
         }
+
+    def build_roi_report(
+        self,
+        org_id: str,
+        learners: int,
+        training_hours_saved_per_learner: float,
+        cost_per_training_hour: float,
+        annual_contract_value: float,
+        window_days: int = 30,
+    ) -> Dict[str, Any]:
+        if not self._org_exists(org_id):
+            raise ValueError("organization_not_found")
+        learner_count = max(0, int(learners))
+        hours_saved = max(0.0, float(training_hours_saved_per_learner))
+        hourly_cost = max(0.0, float(cost_per_training_hour))
+        contract_value = max(0.0, float(annual_contract_value))
+        gross_savings = learner_count * hours_saved * hourly_cost
+        net_savings = gross_savings - contract_value
+        roi_multiple = (gross_savings / contract_value) if contract_value > 0.0 else 0.0
+        payback_months = (12.0 / roi_multiple) if roi_multiple > 0.0 else 0.0
+        analytics = self.compute_org_analytics(org_id=org_id, window_days=window_days)
+        report = {
+            "org_id": org_id,
+            "generated_at": time.time(),
+            "window_days": int(window_days),
+            "inputs": {
+                "learners": learner_count,
+                "training_hours_saved_per_learner": hours_saved,
+                "cost_per_training_hour": hourly_cost,
+                "annual_contract_value": contract_value,
+            },
+            "analytics": analytics,
+            "gross_savings": float(gross_savings),
+            "net_savings": float(net_savings),
+            "roi_multiple": float(roi_multiple),
+            "payback_months": float(payback_months),
+            "executive_summary": (
+                f"Estimated annual savings are {gross_savings:,.2f} against an annual contract value of "
+                f"{contract_value:,.2f}, producing an ROI multiple of {roi_multiple:.2f}x."
+            ),
+        }
+        self.log_audit_event(
+            action="roi_report_generated",
+            entity_type="roi_report",
+            entity_id=org_id,
+            org_id=org_id,
+            metadata={
+                "learners": learner_count,
+                "gross_savings": gross_savings,
+                "annual_contract_value": contract_value,
+                "roi_multiple": roi_multiple,
+            },
+        )
+        return report
 
     @staticmethod
     def _z_for_diff(a: float, b: float, n: int) -> float:
@@ -713,6 +1147,22 @@ class TenantMemoryStore:
                 ),
             )
             self._conn.commit()
+
+        self.log_audit_event(
+            action="pilot_evaluated",
+            entity_type="pilot_evaluation",
+            entity_id=org_id,
+            org_id=org_id,
+            metadata={
+                "sample_size": int(sample_size),
+                "go_decision": bool(go),
+                "retained_mastery_lift": lift_retained,
+                "forgetting_velocity_reduction": reduction_forgetting,
+                "review_efficiency_lift": lift_efficiency,
+                "reasons": reasons,
+            },
+            created_at=now,
+        )
 
         return {
             "org_id": org_id,

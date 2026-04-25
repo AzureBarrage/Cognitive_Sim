@@ -15,6 +15,7 @@ cognitive-sim = "src.main:cli"
 cognitive-sim-api = "src.api:main"
 cognitive-sim-suite = "src.simulation_suite:main"
 cognitive-sim-ui = "src.frontend_app:main"
+cognitive-sim-daily-recall-ui = "src.daily_recall_coach_app:main"
 
 [tool.setuptools]
 include-package-data = true

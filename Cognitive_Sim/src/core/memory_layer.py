@@ -5,7 +5,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -47,6 +47,7 @@ class MemoryLayer:
         self.default_difficulty = float(config.default_difficulty)
         self.initial_interval_seconds = float(config.initial_interval_seconds)
         self.relearn_penalty_factor = float(config.relearn_penalty_factor)
+        self.payload_save_limit = int(config.payload_save_limit)
 
         self.store_dir = Path(config.store_dir)
         self.index_path = Path(config.index_path)
@@ -60,6 +61,9 @@ class MemoryLayer:
         self._scheduled_due: Dict[str, float] = {}
         self._heap_seq = 0
         self._lock = RLock()
+        self._stability_sum = 0.0
+        self._dirty_payload_ids: Set[str] = set()
+        self._index_dirty = False
 
     @staticmethod
     def _cpuify(obj: Any) -> Any:
@@ -109,6 +113,7 @@ class MemoryLayer:
                 for due_at, seq, mem_id in self._review_heap
             ]
             heapq.heapify(self._review_heap)
+            self._index_dirty = True
 
     def _schedule_review(self, memory_id: str, threshold: Optional[float] = None) -> None:
         record = self.memories.get(memory_id)
@@ -128,8 +133,39 @@ class MemoryLayer:
                 return
             heapq.heappop(self._review_heap)
 
+    def _collect_due_memory_ids(self, now: Optional[float] = None, limit: int = 1000) -> List[str]:
+        max_items = max(0, int(limit))
+        if max_items == 0:
+            return []
+
+        reference_time = time.time() if now is None else float(now)
+        self._cleanup_heap()
+
+        due_ids: List[str] = []
+        popped: List[Tuple[float, int, str]] = []
+        while self._review_heap and len(due_ids) < max_items:
+            due_at, seq, mem_id = heapq.heappop(self._review_heap)
+            popped.append((due_at, seq, mem_id))
+
+            if mem_id not in self.memories:
+                continue
+            if self._scheduled_due.get(mem_id) != due_at:
+                continue
+            if due_at > reference_time:
+                break
+
+            due_ids.append(mem_id)
+
+        for entry in popped:
+            heapq.heappush(self._review_heap, entry)
+        return due_ids
+
     def _serialize_record(self, record: MemoryRecord) -> Dict[str, Any]:
         return asdict(record)
+
+    def _mark_payload_dirty(self, memory_id: str) -> None:
+        self._dirty_payload_ids.add(memory_id)
+        self._index_dirty = True
 
     def _deserialize_record(self, memory_id: str, payload: Dict[str, Any]) -> MemoryRecord:
         return MemoryRecord(
@@ -160,6 +196,10 @@ class MemoryLayer:
     ) -> None:
         now = time.time()
         with self._lock:
+            previous = self.memories.get(memory_id)
+            if previous is not None:
+                self._stability_sum -= float(previous.stability)
+
             record = MemoryRecord(
                 key=memory_id,
                 created_at=now,
@@ -179,7 +219,9 @@ class MemoryLayer:
                 embedding=embedding,
             )
             self.memories[memory_id] = record
+            self._stability_sum += float(record.stability)
             self._payload_cache[memory_id] = data
+            self._mark_payload_dirty(memory_id)
             self._schedule_review(memory_id)
 
     def _load_payload(self, memory_id: str) -> Optional[Any]:
@@ -226,6 +268,7 @@ class MemoryLayer:
                 return
 
             now = time.time()
+            previous_stability = float(record.stability)
             retention = self._calculate_retention(record, now=now)
             quality = int(np.clip(round(retention * 5.0), 0, 5)) if success else 0
 
@@ -257,21 +300,24 @@ class MemoryLayer:
                 record.stability = float(max(self.min_stability, record.stability / self.relearn_penalty_factor))
                 record.last_access = now
 
+            self._stability_sum += float(record.stability) - previous_stability
+            self._index_dirty = True
             self._schedule_review(memory_id)
 
     def has_at_risk_memory(self, threshold: Optional[float] = None) -> bool:
         threshold_value = self.review_threshold if threshold is None else float(threshold)
         with self._lock:
-            self._cleanup_heap()
             now = time.time()
-            if self._review_heap:
-                due_at, _, _ = self._review_heap[0]
-                if due_at <= now:
-                    return True
+            if threshold is None or abs(threshold_value - self.review_threshold) <= 1e-9:
+                return bool(self._collect_due_memory_ids(now=now, limit=1))
             for record in self.memories.values():
                 if self._calculate_retention(record, now=now) < threshold_value:
                     return True
             return False
+
+    def get_due_memory_ids(self, limit: int = 1000) -> List[str]:
+        with self._lock:
+            return self._collect_due_memory_ids(limit=limit)
 
     def get_at_risk_memories(self, threshold: Optional[float] = None, limit: int = 1000) -> List[str]:
         threshold_value = self.review_threshold if threshold is None else float(threshold)
@@ -304,7 +350,8 @@ class MemoryLayer:
             return due_ids
 
     def get_due_review_count(self, limit: int = 1000) -> int:
-        return len(self.get_at_risk_memories(limit=limit))
+        with self._lock:
+            return len(self._collect_due_memory_ids(limit=limit))
 
     def memory_stats(self) -> Dict[str, float]:
         with self._lock:
@@ -333,7 +380,7 @@ class MemoryLayer:
         with self._lock:
             if not self.memories:
                 return 1.0
-            return float(np.mean([record.stability for record in self.memories.values()]))
+            return float(self._stability_sum / max(1, len(self.memories)))
 
     def consolidate_due_memories(self, limit: int = 250, boost: float = 0.25) -> int:
         with self._lock:
@@ -343,9 +390,12 @@ class MemoryLayer:
                 record = self.memories.get(memory_id)
                 if record is None:
                     continue
+                previous_stability = float(record.stability)
                 record.stability = float(max(self.min_stability, record.stability * (1.0 + float(boost))))
                 record.strength = float(min(1.0, record.strength + 0.02))
                 record.forgotten = False
+                self._stability_sum += float(record.stability) - previous_stability
+                self._index_dirty = True
                 self._schedule_review(memory_id)
                 count += 1
             return count
@@ -404,25 +454,45 @@ class MemoryLayer:
             self._review_heap.clear()
             self._scheduled_due.clear()
             self._heap_seq = 0
+            self._stability_sum = 0.0
+            self._dirty_payload_ids.clear()
+            self._index_dirty = True
 
     def save_state(self) -> None:
         with self._lock:
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
             self.store_dir.mkdir(parents=True, exist_ok=True)
 
-            index_dump: Dict[str, Dict[str, Any]] = {}
-            for memory_id, record in self.memories.items():
+            if not self._index_dirty and not self._dirty_payload_ids and self.index_path.exists():
+                return
+
+            payload_ids = list(self._dirty_payload_ids)
+            if self.payload_save_limit > 0:
+                payload_ids = payload_ids[: self.payload_save_limit]
+
+            for memory_id in payload_ids:
+                record = self.memories.get(memory_id)
+                if record is None:
+                    self._dirty_payload_ids.discard(memory_id)
+                    continue
                 data_path = Path(record.data_path)
                 payload = self._payload_cache.get(memory_id)
                 if payload is not None:
                     try:
                         torch.save(self._cpuify(payload), data_path)
+                        self._dirty_payload_ids.discard(memory_id)
                     except Exception as exc:
                         logger.warning("Failed to save memory payload for %s: %s", memory_id, exc)
-                index_dump[memory_id] = self._serialize_record(record)
 
-            with open(self.index_path, "w", encoding="utf-8") as handle:
-                json.dump(index_dump, handle, indent=2)
+            if self._index_dirty or not self.index_path.exists():
+                index_dump: Dict[str, Dict[str, Any]] = {}
+                for memory_id, record in self.memories.items():
+                    index_dump[memory_id] = self._serialize_record(record)
+
+                with open(self.index_path, "w", encoding="utf-8") as handle:
+                    json.dump(index_dump, handle, indent=2)
+
+            self._index_dirty = False
 
     def load_state(self) -> None:
         with self._lock:
@@ -435,9 +505,12 @@ class MemoryLayer:
                 for memory_id, rec_payload in payload.items():
                     record = self._deserialize_record(memory_id, rec_payload)
                     self.memories[memory_id] = record
+                    self._stability_sum += float(record.stability)
                     self._schedule_review(memory_id)
                     if self.eager_load:
                         self._load_payload(memory_id)
+                self._dirty_payload_ids.clear()
+                self._index_dirty = False
                 logger.info("Memory state loaded from %s with %d items", self.index_path, len(self.memories))
                 return
 
@@ -447,5 +520,8 @@ class MemoryLayer:
                 for memory_id, rec_payload in legacy.items():
                     record = self._deserialize_record(memory_id, rec_payload)
                     self.memories[memory_id] = record
+                    self._stability_sum += float(record.stability)
                     self._schedule_review(memory_id)
+                self._dirty_payload_ids.clear()
+                self._index_dirty = False
                 logger.info("Legacy memory metadata loaded: %d items", len(self.memories))

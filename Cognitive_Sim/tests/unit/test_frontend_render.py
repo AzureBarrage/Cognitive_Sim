@@ -31,6 +31,9 @@ class _Container:
     def subheader(self, *args, **kwargs):
         return self.parent.subheader(*args, **kwargs)
 
+    def metric(self, *args, **kwargs):
+        return self.parent.metric(*args, **kwargs)
+
 
 class FakeStreamlit:
     def __init__(
@@ -58,6 +61,9 @@ class FakeStreamlit:
         return None
 
     def caption(self, *args, **kwargs):
+        return None
+
+    def metric(self, *args, **kwargs):
         return None
 
     def subheader(self, *args, **kwargs):
@@ -104,6 +110,24 @@ class FakeStreamlit:
     def json(self, payload: Dict[str, Any]):
         self.json_payloads.append(payload)
 
+    def write(self, *args, **kwargs):
+        return None
+
+    def markdown(self, *args, **kwargs):
+        return None
+
+    def info(self, *args, **kwargs):
+        return None
+
+    def warning(self, *args, **kwargs):
+        return None
+
+    def dataframe(self, *args, **kwargs):
+        return None
+
+    def text_area(self, label: str, value: str = "", **kwargs):
+        return self.text_values.get(label, value)
+
 
 def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
     calls: List[str] = []
@@ -122,6 +146,8 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
     monkeypatch.setattr(frontend_app, "sleep", _record("sleep"))
     monkeypatch.setattr(frontend_app, "create_organization", _record("create_organization"))
     monkeypatch.setattr(frontend_app, "create_user", _record("create_user"))
+    monkeypatch.setattr(frontend_app, "upsert_concept", _record("upsert_concept"))
+    monkeypatch.setattr(frontend_app, "list_concepts", _record("list_concepts"))
     monkeypatch.setattr(frontend_app, "record_attempt", _record("record_attempt"))
     monkeypatch.setattr(frontend_app, "get_review_queue", _record("get_review_queue"))
     monkeypatch.setattr(frontend_app, "get_analytics", _record("get_analytics"))
@@ -138,8 +164,9 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
             "Refresh /status": True,
             "Refresh /metrics": True,
             "Trigger /sleep": True,
-            "Load /review-queue": True,
-            "Load /analytics": True,
+            "Load Compliance Topics": True,
+            "Load At-Risk Knowledge": True,
+            "Load Compliance Risk Dashboard": True,
             "Load /memories": True,
             "Send /pilot/setup": True,
             "Send /pilot/baseline": True,
@@ -150,9 +177,10 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
         submit_values={
             "Send /teach": True,
             "Send /ask": True,
-            "Send /organizations": True,
-            "Send /users": True,
-            "Send /record-attempt": True,
+            "Create Organization": True,
+            "Create Employee Learner": True,
+            "Submit Knowledge Check": True,
+            "Save Compliance Topic": True,
         },
         text_values={
             "seed org_id": "org_demo",
@@ -160,12 +188,12 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
             "seed email": "demo@example.com",
         },
         number_values={
-            "seed concept count": 20,
-            "seed backdate minutes/attempt": 2.0,
+            "seed compliance topic count": 20,
+            "seed backdate minutes / knowledge check": 2.0,
         },
     )
 
-    fake_st.button_values["Seed Demo Data"] = True
+    fake_st.button_values["Seed Compliance Demo Data"] = True
 
     frontend_app.render_dashboard(fake_st, config=SimulationConfig())
 
@@ -177,6 +205,8 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
         "sleep",
         "create_organization",
         "create_user",
+        "upsert_concept",
+        "list_concepts",
         "record_attempt",
         "get_review_queue",
         "get_analytics",
@@ -188,6 +218,6 @@ def test_render_dashboard_wires_buttons_and_forms(monkeypatch) -> None:
         "pilot_history",
         "seed_demo_data",
     }
-    assert len(fake_st.success_messages) == 17
-    assert len(fake_st.json_payloads) == 17
+    assert len(fake_st.success_messages) == 19
+    assert len(fake_st.json_payloads) == 19
 

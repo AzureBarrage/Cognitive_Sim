@@ -46,7 +46,11 @@ class CognitiveSimulation:
         self.env = SimulationEnvironment(self.data_manager.get_train_loader(batch_size=self.config.data.batch_size))
 
         self.monitor = PerformanceMonitor()
-        self.metrics = MetricsTracker(artifact_dir=self.config.runtime.artifact_dir)
+        self.metrics = MetricsTracker(
+            artifact_dir=self.config.runtime.artifact_dir,
+            flush_every=self.config.runtime.metrics_flush_every,
+            flush_interval_seconds=self.config.runtime.metrics_flush_interval_seconds,
+        )
         self.checkpoint_path = self.config.runtime.checkpoint_path
 
         if not fresh:
@@ -55,14 +59,9 @@ class CognitiveSimulation:
             if payload and "optimizer_state" in payload:
                 self.optimizer.load_state_dict(payload["optimizer_state"])
 
-    @staticmethod
-    def _batch_accuracy(outputs: torch.Tensor, targets: torch.Tensor) -> float:
-        diff = torch.mean(torch.abs(outputs - targets)).item()
-        return float(max(0.0, 1.0 - diff))
-
-    def _log_step(self, step: int, action: str, action_result: Dict[str, Any], outputs: torch.Tensor, targets: torch.Tensor) -> None:
-        entropy = float(self.network.calculate_uncertainty())
-        accuracy = self._batch_accuracy(outputs, targets)
+    def _log_step(self, step: int, action: str, action_result: Dict[str, Any]) -> None:
+        entropy = float(self.network.get_uncertainty())
+        accuracy = float(action_result.get("accuracy", max(0.0, 1.0 - float(action_result.get("mae", 1.0)))))
         self.metrics.log_training_step(
             step=step,
             loss=float(action_result.get("loss", 0.0)),
@@ -70,6 +69,8 @@ class CognitiveSimulation:
             accuracy=accuracy,
             energy=float(self.agent.energy),
         )
+        if "loss" in action_result:
+            self.optimizer.update_scheduler(float(action_result.get("loss", 0.0)))
 
         total_reviews = self.agent.review_successes + self.agent.review_failures
         success_rate = (self.agent.review_successes / total_reviews) if total_reviews else 0.0
@@ -122,9 +123,7 @@ class CognitiveSimulation:
             if simulated_step_seconds > 0:
                 self.memory.advance_time(simulated_step_seconds)
 
-            with torch.no_grad():
-                outputs, _ = self.network(batch_inputs)
-            self._log_step(step=step, action=action, action_result=result, outputs=outputs, targets=batch_targets)
+            self._log_step(step=step, action=action, action_result=result)
 
             if sleep_seconds > 0:
                 time.sleep(float(sleep_seconds))
@@ -143,6 +142,7 @@ class CognitiveSimulation:
     def persist_state(self) -> None:
         self.memory.save_state()
         self.network.save_checkpoint(self.checkpoint_path, optimizer_state=self.optimizer.state_dict())
+        self.metrics.flush()
 
     def verify(self) -> Dict[str, Any]:
         issues = []

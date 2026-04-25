@@ -47,6 +47,12 @@ Run API server:
 python -m src.api
 ```
 
+Run Daily Recall Coach frontend:
+
+```bash
+streamlit run src/daily_recall_coach_app.py
+```
+
 ---
 
 ## Docker Quickstart
@@ -94,6 +100,12 @@ Launch Streamlit frontend dashboard:
 streamlit run src/frontend_app.py
 ```
 
+Launch Daily Recall Coach via package script:
+
+```bash
+cognitive-sim-daily-recall-ui
+```
+
 Dashboard includes:
 - status and metrics refresh
 - teach / ask / sleep controls
@@ -117,11 +129,21 @@ Dashboard includes:
 - `POST /reset` — dev-guarded reset endpoint
 - `POST /organizations` — create tenant organization
 - `POST /users` — create user under organization
+- `PUT /concepts` — create or update tenant-owned learning content concepts
+- `GET /concepts` / `GET /concepts/{concept_id}` — list or retrieve learning content concepts
 - `POST /record-attempt` — write per-user concept attempt and update memory state
+- `POST /daily-session` — single-call daily workflow (optional attempt write + refreshed queue + analytics)
 - `GET /review-queue` — get prioritized concept review queue per user
 - `GET /analytics` — user/org retention analytics (money layer)
+- `GET /audit-log` — tenant/user action audit trail
+- `POST /roi/report` — executive ROI report for B2B business cases
+- `GET /exports/review-queue.csv`, `GET /exports/analytics.csv`, `GET /exports/audit-log.csv`, `POST /exports/roi-report.csv` — CSV exports
 - `POST /pilot/evaluate` — objective go/no-go evaluation with confidence checks
 - `GET /pilot/history` — historical pilot gate decisions
+
+Authentication:
+
+- When `runtime.require_api_key` is true (see [`production.yaml`](Cognitive_Sim/configs/production.yaml:1)), send the key via `x-api-key: <value>` or `Authorization: Bearer <value>`.
 
 Examples:
 
@@ -162,9 +184,31 @@ curl -X POST http://localhost:8000/users \
 ```
 
 ```bash
+curl -X PUT http://localhost:8000/concepts \
+  -H "Content-Type: application/json" \
+  -d '{"org_id":"org_acme","concept_id":"cardiology_001","title":"Recognize unstable angina","prompt":"Which symptoms require escalation?","answer":"Chest pain at rest, ECG changes, or elevated biomarkers.","explanation":"Reinforces safe triage and escalation behavior.","tags":["clinical","triage"],"difficulty":2.0,"source":"cardiology_playbook"}'
+```
+
+```bash
+curl "http://localhost:8000/concepts?org_id=org_acme&limit=20"
+```
+
+```bash
 curl -X POST http://localhost:8000/record-attempt \
   -H "Content-Type: application/json" \
   -d '{"user_id":"usr_001","concept_id":"cardiology_001","correct":true,"response_ms":850}'
+```
+
+```bash
+curl -X POST http://localhost:8000/daily-session \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"usr_001","limit":20,"window_days":30}'
+```
+
+```bash
+curl -X POST http://localhost:8000/daily-session \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"usr_001","limit":20,"attempt":{"concept_id":"cardiology_001","correct":true,"response_ms":810}}'
 ```
 
 ```bash
@@ -177,6 +221,20 @@ curl "http://localhost:8000/analytics?user_id=usr_001"
 
 ```bash
 curl "http://localhost:8000/analytics?org_id=org_acme"
+```
+
+```bash
+curl -X POST http://localhost:8000/roi/report \
+  -H "Content-Type: application/json" \
+  -d '{"org_id":"org_acme","learners":10000,"training_hours_saved_per_learner":2.5,"cost_per_training_hour":60,"annual_contract_value":300000,"window_days":30}'
+```
+
+```bash
+curl "http://localhost:8000/audit-log?org_id=org_acme&limit=20"
+```
+
+```bash
+curl "http://localhost:8000/exports/review-queue.csv?user_id=usr_001&limit=20"
 ```
 
 ```bash
@@ -206,17 +264,37 @@ Important sections:
 - `agent`: energy economy and policy parameters
 - `data`: deterministic/stochastic toy environment settings
 - `runtime`: checkpoint path and run-artifact output path
+  - `runtime.require_api_key` + `runtime.api_key` to enforce API auth
+  - `runtime.metrics_flush_every` + `runtime.metrics_flush_interval_seconds` to buffer metric writes
+  - `memory.payload_save_limit` to cap memory payload writes per save for large stores
 
 Multi-tenant runtime options:
 
 - `runtime.tenant_db_path`: SQLite file for tenant/user memory state and attempts
 - `runtime.analytics_window_days`: default analytics horizon for `/analytics`
+- `runtime.analytics_window_days`: default analytics horizon for `/analytics` and `/daily-session`
 - `runtime.pilot_min_retained_mastery_lift`: minimum lift threshold for pilot pass
 - `runtime.pilot_min_forgetting_velocity_reduction`: minimum forgetting reduction threshold
 - `runtime.pilot_min_review_efficiency_lift`: minimum review efficiency lift threshold
 - `runtime.pilot_confidence_z_threshold`: minimum z-score confidence threshold
 - `runtime.pilot_min_sample_size`: minimum cohort size for gate decision
 - `runtime.pilot_max_onboarding_hours`: implementation economics guardrail
+
+---
+
+## Daily Recall Coach workflow
+
+The Daily Recall Coach app is a focused learner workflow for recurring daily practice.
+
+1. Bootstrap learner identity using tenant APIs (`/organizations`, `/users`) from the app sidebar.
+2. Load a daily session with `/daily-session` to receive:
+   - prioritized queue
+   - due count and next best concept
+   - learner analytics snapshot
+   - recommended action (`review_due_items`, `build_consistency`, `seed_attempts`)
+3. Submit an attempt through the same endpoint by including `attempt` in the request body.
+
+This keeps the primary UX as a single round-trip per learner action while preserving compatibility with existing endpoints.
 
 ---
 

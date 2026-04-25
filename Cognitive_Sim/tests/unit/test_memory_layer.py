@@ -74,3 +74,48 @@ def test_advance_time_makes_memory_due(tmp_path) -> None:
 
     assert before == 0
     assert after >= 1
+
+
+def test_due_review_helpers_use_heap_for_default_threshold(tmp_path, monkeypatch) -> None:
+    config = MemoryConfig(
+        initial_interval_seconds=30.0,
+        store_dir=str(tmp_path / "store"),
+        index_path=str(tmp_path / "index.json"),
+    )
+    memory = MemoryLayer(config)
+    memory.add_memory("heap_due", {"input": torch.randn(1, 10), "target": torch.randn(1, 5)})
+    memory.advance_time(120.0)
+
+    def fail_retention_scan(*args, **kwargs):
+        raise AssertionError("default due helpers should not recalculate retention")
+
+    monkeypatch.setattr(memory, "_calculate_retention", fail_retention_scan)
+
+    assert memory.get_due_review_count() == 1
+    assert memory.has_at_risk_memory() is True
+    assert memory.get_due_memory_ids(limit=1) == ["heap_due"]
+
+
+def test_save_state_skips_clean_payload_rewrites(tmp_path, monkeypatch) -> None:
+    config = MemoryConfig(
+        store_dir=str(tmp_path / "store"),
+        index_path=str(tmp_path / "index.json"),
+    )
+    memory = MemoryLayer(config)
+    memory.add_memory("clean_save", {"input": torch.randn(1, 10), "target": torch.randn(1, 5)})
+
+    saved_paths = []
+    original_save = torch.save
+
+    def counting_save(*args, **kwargs):
+        saved_paths.append(str(args[1]))
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr("src.core.memory_layer.torch.save", counting_save)
+
+    memory.save_state()
+    first_save_count = len(saved_paths)
+    memory.save_state()
+
+    assert first_save_count >= 1
+    assert len(saved_paths) == first_save_count
